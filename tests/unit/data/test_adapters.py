@@ -1,8 +1,7 @@
-"""ThetaData and Polygon adapters against mocked HTTP (no network)."""
+"""ThetaData adapter and fixture source, mocked HTTP (no network); Massive: test_massive.py."""
 
 from __future__ import annotations
 
-import json
 from datetime import UTC, date, datetime
 from decimal import Decimal
 from pathlib import Path
@@ -10,9 +9,8 @@ from pathlib import Path
 import httpx
 import pytest
 
-from remy_finance.core import CorporateActionType, DividendType, QualityFlag, Right
+from remy_finance.core import QualityFlag, Right
 from remy_finance.data import CompositeSource, FixtureSource
-from remy_finance.data.polygon import PolygonError, PolygonSource
 from remy_finance.data.thetadata import ThetaDataError, ThetaDataSource, UnsupportedDataError
 from tests import factories as f
 
@@ -143,107 +141,6 @@ def test_theta_errors() -> None:
         theta(boom).dividends("KO", TS)
 
 
-def polygon(handler: object) -> PolygonSource:
-    return PolygonSource(
-        "k", base_url="http://p", transport=httpx.MockTransport(handler), clock=lambda: NOW
-    )  # type: ignore[arg-type]
-
-
-def test_polygon_dividends_public_time_pagination_and_skips() -> None:
-    calls: list[str] = []
-
-    def h(req: httpx.Request) -> httpx.Response:
-        calls.append(str(req.url))
-        assert req.headers["Authorization"] == "Bearer k"
-        if "cursor" not in str(req.url):
-            return httpx.Response(
-                200,
-                json={
-                    "results": [
-                        {
-                            "cash_amount": 0.51,
-                            "declaration_date": "2026-10-16",
-                            "ex_dividend_date": "2026-11-28",
-                            "pay_date": "2026-12-15",
-                            "dividend_type": "CD",
-                        }
-                    ],
-                    "next_url": "http://p/v3/reference/dividends?cursor=abc",
-                },
-            )
-        return httpx.Response(
-            200,
-            text=json.dumps(
-                {
-                    "results": [
-                        {
-                            "cash_amount": 1.0,
-                            "declaration_date": "2026-11-06",
-                            "ex_dividend_date": "2026-11-20",
-                            "dividend_type": "SC",
-                        },
-                        {
-                            "cash_amount": 0.5,
-                            "ex_dividend_date": "2026-09-01",
-                            "dividend_type": "CD",
-                        },
-                    ]
-                }
-            ),
-        )
-
-    src = polygon(h)
-    divs = src.dividends("KO", TS)  # 2026-11-06 declaration at 16:00 ET is after TS (10:00 ET)
-    assert [(d.amount, d.dividend_type) for d in divs] == [(D("0.51"), DividendType.ORDINARY)]
-    assert divs[0].public_time == datetime(2026, 10, 16, 20, 0, tzinfo=UTC)
-    later = datetime(2026, 11, 6, 21, 0, tzinfo=UTC)
-    assert len(src.dividends("KO", later)) == 2
-    assert src.skipped == ["KO ex 2026-09-01: no declaration_date"]
-    assert len(calls) == 2  # cached after the first load
-
-
-def test_polygon_splits_and_special_dividend_actions() -> None:
-    def h(req: httpx.Request) -> httpx.Response:
-        if "splits" in req.url.path:
-            return httpx.Response(
-                200,
-                json={
-                    "results": [
-                        {"execution_date": "2026-06-10", "split_from": 1, "split_to": 4},
-                        {"execution_date": "2025-01-02", "split_from": 10, "split_to": 1},
-                    ]
-                },
-            )
-        return httpx.Response(
-            200,
-            json={
-                "results": [
-                    {
-                        "cash_amount": 2.5,
-                        "declaration_date": "2026-05-01",
-                        "ex_dividend_date": "2026-05-20",
-                        "dividend_type": "SC",
-                    }
-                ]
-            },
-        )
-
-    acts = polygon(h).corporate_actions("XYZ", TS)
-    kinds = sorted(a.action_type.value for a in acts)
-    assert kinds == ["REVERSE_SPLIT", "SPECIAL_DIVIDEND", "SPLIT"]
-    split = next(a for a in acts if a.action_type is CorporateActionType.SPLIT)
-    assert split.public_time == datetime(2026, 6, 10, 13, 30, tzinfo=UTC)  # 09:30 EDT
-    assert dict(split.details) == {"split_from": "1", "split_to": "4"}
-
-
-def test_polygon_requires_key_and_reports_errors(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv("POLYGON_API_KEY", raising=False)
-    with pytest.raises(PolygonError, match="POLYGON_API_KEY"):
-        PolygonSource()
-    with pytest.raises(PolygonError, match="401"):
-        polygon(lambda r: httpx.Response(401, text="bad key")).dividends("KO", TS)
-
-
 def test_fixture_round_trip_and_composite(tmp_path: Path) -> None:
     src = FixtureSource([f.option_quote(), f.underlying_quote(), f.dividend(), f.rate()])
     path = tmp_path / "fixture.jsonl"
@@ -253,15 +150,3 @@ def test_fixture_round_trip_and_composite(tmp_path: Path) -> None:
     comp = CompositeSource(quotes=again, events=again)
     assert comp.dividends("XYZ", f.AS_OF) and comp.rates(f.AS_OF)
     assert comp.list_contracts("XYZ", f.AS_OF)[0].osi_symbol == f.contract().osi_symbol
-
-
-def test_polygon_default_base_url_is_massive(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv("POLYGON_BASE_URL", raising=False)
-    seen: list[str] = []
-
-    def h(req: httpx.Request) -> httpx.Response:
-        seen.append(req.url.host)
-        return httpx.Response(200, json={"results": []})
-
-    PolygonSource("k", transport=httpx.MockTransport(h)).dividends("KO", TS)
-    assert seen == ["api.massive.com"]

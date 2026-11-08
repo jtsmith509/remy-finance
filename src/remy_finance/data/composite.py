@@ -1,5 +1,5 @@
 """CompositeSource: quotes and rates from one source, dividends and corporate actions
-from another (ThetaData + Polygon, DR-0013/DR-0014)."""
+from another (ThetaData + Massive, DR-0013/DR-0014)."""
 
 from __future__ import annotations
 

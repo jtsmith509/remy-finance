@@ -6,7 +6,7 @@ Verified behaviour this adapter relies on (docs/memos/R0.1-data-verification.md)
 - ``stock/at_time/quote`` stamps rows with the *requested* time (flagged).
 - ``interest_rate/history/eod`` returns percent, one row per calendar day, no publication
   time; ``public_time`` follows DR-0011 (next business day 09:30 ET).
-- ThetaData has no dividend or corporate-action data (use PolygonSource, DR-0014).
+- ThetaData has no dividend or corporate-action data (use MassiveSource, DR-0014).
 JSON is parsed with ``parse_float=Decimal``: no price ever passes through a float.
 """
 
@@ -190,11 +190,11 @@ class ThetaDataSource:
         )
 
     def dividends(self, symbol: str, known_as_of: datetime) -> Sequence[DividendEvent]:
-        raise UnsupportedDataError("ThetaData has no dividend data (R0.1); use PolygonSource")
+        raise UnsupportedDataError("ThetaData has no dividend data (R0.1); use MassiveSource")
 
     def corporate_actions(self, symbol: str, known_as_of: datetime) -> Sequence[CorporateAction]:
         raise UnsupportedDataError(
-            "ThetaData has no corporate-action data (R0.1); use PolygonSource"
+            "ThetaData has no corporate-action data (R0.1); use MassiveSource"
         )
 
     def rates(self, known_as_of: datetime) -> Sequence[RatePoint]:

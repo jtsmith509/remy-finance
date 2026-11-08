@@ -1,4 +1,4 @@
-"""Market data: the source protocol, adapters (ThetaData, Polygon, fixtures) and the
+"""Market data: the source protocol, adapters (ThetaData, Massive, fixtures) and the
 point-in-time view through which all model-side reads must go."""
 
 from remy_finance.data.composite import CompositeSource

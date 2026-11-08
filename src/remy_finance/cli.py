@@ -55,13 +55,13 @@ def _session(text: str) -> Session:
 
 def _sources(no_events: bool):  # type: ignore[no-untyped-def]
     from remy_finance.data.composite import CompositeSource
-    from remy_finance.data.polygon import PolygonSource
+    from remy_finance.data.massive import MassiveSource
     from remy_finance.data.thetadata import ThetaDataSource
 
     theta = ThetaDataSource()
-    # Without Polygon, the events side is ThetaData itself, which raises: every symbol then
+    # Without Massive, the events side is ThetaData itself, which raises: every symbol then
     # carries a quality note instead of silently having no dividends.
-    events = theta if no_events else PolygonSource()
+    events = theta if no_events else MassiveSource()
     return theta, CompositeSource(quotes=theta, events=events)
 
 
@@ -94,7 +94,7 @@ def snapshot_build(
     session: SessionOpt,
     symbols: SymbolsOpt = "",
     no_events: Annotated[
-        bool, typer.Option(help="Skip Polygon (dividends/CAs become gap notes)")
+        bool, typer.Option(help="Skip Massive (dividends/CAs become gap notes)")
     ] = False,
     movegen: Annotated[
         bool, typer.Option(help="Also run the move generator and report counts/timing")
@@ -167,7 +167,7 @@ def snapshot_take(
     session: SessionOpt,
     symbols: SymbolsOpt = "",
     no_events: Annotated[
-        bool, typer.Option(help="Skip Polygon (dividends/CAs become gap notes)")
+        bool, typer.Option(help="Skip Massive (dividends/CAs become gap notes)")
     ] = False,
     with_execution: Annotated[
         bool, typer.Option(help="Wait and take the +5 min execution snapshot too")

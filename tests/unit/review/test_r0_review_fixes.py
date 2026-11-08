@@ -36,7 +36,7 @@ from remy_finance.core import (
     UnderlyingQuote,
 )
 from remy_finance.data import FixtureSource
-from remy_finance.data.polygon import PolygonSource
+from remy_finance.data.massive import MassiveSource
 from remy_finance.execution.settlement import settle_at_expiration
 from remy_finance.snapshots.builder import build_prospective, build_replay
 from remy_finance.snapshots.schedule import SnapshotKind
@@ -188,18 +188,21 @@ def test_f06_dividend_failure_does_not_skip_independent_split_read() -> None:
     assert board.option_quotes and board.underlying_quotes
 
 
-def test_f06_polygon_keeps_splits_when_dividend_feed_fails() -> None:
+def test_f06_massive_keeps_splits_when_dividend_feed_fails() -> None:
     def h(req: httpx.Request) -> httpx.Response:
         if "splits" in req.url.path:
-            return httpx.Response(
-                200,
-                json={
-                    "results": [{"execution_date": "2026-06-10", "split_from": 1, "split_to": 4}]
-                },
-            )
+            row = {
+                "execution_date": "2026-06-10",
+                "split_from": 1,
+                "split_to": 4,
+                "adjustment_type": "forward_split",
+            }
+            return httpx.Response(200, json={"results": [row]})
+        if "events" in req.url.path:
+            return httpx.Response(200, json={"results": {"events": []}})
         return httpx.Response(500, text="dividends down")
 
-    src = PolygonSource("k", base_url="http://p", transport=httpx.MockTransport(h))
+    src = MassiveSource("k", base_url="http://p", transport=httpx.MockTransport(h))
     acts = src.corporate_actions("XYZ", datetime(2026, 11, 6, 15, tzinfo=UTC))
     assert [a.action_type for a in acts] == [CorporateActionType.SPLIT]
     assert any("special dividends unavailable" in s for s in src.skipped)
