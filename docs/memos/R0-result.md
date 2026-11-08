@@ -81,6 +81,10 @@
   - **By type:** iron condors 117,811; debit verticals 43,566; credit verticals 43,566; call butterflies 18,947; put butterflies 18,947; long calls 8,984; long puts 8,984; the null move 1.
   - **Against the estimates:** this is consistent with DR-0020's estimate of 300–350k. It's about 4× faster than the synthetic-board estimate of about 70 s.
 
+**`remy snapshot verify`** (2026-11-08): `verified 2 snapshots, 0 failed; gaps recorded: 0`.
+
+**First `remy snapshot take`** (Sunday 2026-11-08): **correctly refused**, because it's not a trading session. It did fetch a live board before the store refused it, though. Fixed: `take` now checks the trading-day window before fetching anything, and `--wait` lets it start early and wait for 10:00 ET. The live run is scheduled for Monday 2026-11-09.
+
 ## Remaining before Stop Point B closes (on the Mac mini)
 ```bash
 cd ~/remy-finance && git pull && uv sync
@@ -89,8 +93,8 @@ uv run python scripts/verify_polygon.py                         # DR-0014 + EXP-
 uv run remy universe build --month 2026-11                      # DONE 2026-11-08 (see above)
 uv run remy snapshot build --date 2026-11-06 --session open --movegen     # DONE with --no-events (see above); redo with events after Polygon
 # On a trading day, between 10:00 and 10:10 ET:
-uv run remy snapshot take --session open --with-execution --movegen      # live prospective snapshot
-uv run remy snapshot verify
+uv run remy snapshot take --session open --with-execution --no-events --movegen --wait   # Mon 2026-11-09, start ~09:55 ET
+uv run remy snapshot verify                                      # DONE 2026-11-08 (2 OK); re-run after Monday
 ```
 
 ## Remaining question for Josh
