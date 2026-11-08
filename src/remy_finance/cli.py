@@ -206,6 +206,9 @@ def snapshot_take(
 @universe_app.command("build")
 def universe_build(
     month: Annotated[str, typer.Option(help="YYYY-MM: selects on the month's first XNYS session")],
+    workers: Annotated[
+        int, typer.Option(help="Symbols fetched concurrently (ThetaData Standard: 4)")
+    ] = 4,
 ) -> None:
     """Select and store the UNIV-1 membership for a month (point-in-time, write-once)."""
     from remy_finance.data.thetadata import ThetaDataSource
@@ -218,7 +221,17 @@ def universe_build(
     y, m = (int(x) for x in month.split("-"))
     session = first_session_of_month(y, m)
     t0 = time.perf_counter()
-    decision = select_universe(ThetaDataSource(), session)
+    typer.echo(f"selecting UNIV-1 for {session} with {workers} workers ...")
+
+    def progress(sym: str, done: int, total: int, n: int, window: int, secs: float) -> None:
+        elapsed = time.perf_counter() - t0
+        eta = elapsed / done * (total - done)
+        typer.echo(
+            f"[{done:>2}/{total}] {sym:<6} {n:>2}/{window} sessions  {secs:5.1f}s  "
+            f"elapsed {elapsed / 60:4.1f}m  eta {eta / 60:4.1f}m"
+        )
+
+    decision = select_universe(ThetaDataSource(), session, max_workers=workers, progress=progress)
     path = UniverseStore(_data_dir() / "universe").write(decision)
     typer.echo(
         f"{decision.version_label}: {len(decision.members)} members, window "

@@ -132,3 +132,19 @@ def test_thetadata_option_volume_mapping() -> None:
     )
     assert v is not None and v.contracts == 2000
     assert v.public_time == datetime(2026, 10, 30, 21, 15, tzinfo=UTC)  # 17:15 EDT
+
+
+def test_result_independent_of_concurrency_and_progress_reported() -> None:
+    seen: list[tuple[str, int, int]] = []
+    one = select_universe(fixture(), SEL, candidates=CANDS, rule=RULE, max_workers=1)
+    four = select_universe(
+        fixture(),
+        SEL,
+        candidates=CANDS,
+        rule=RULE,
+        max_workers=4,
+        progress=lambda sym, done, total, n, w, secs: seen.append((sym, done, total)),
+    )
+    assert one.canonical_json() == four.canonical_json()
+    assert sorted(s for s, _, _ in seen) == sorted(CANDS)
+    assert [d for _, d, _ in seen] == [1, 2, 3, 4, 5] and {t for _, _, t in seen} == {5}

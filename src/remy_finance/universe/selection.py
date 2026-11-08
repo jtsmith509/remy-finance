@@ -10,7 +10,9 @@ from __future__ import annotations
 
 import hashlib
 import json
-from collections.abc import Sequence
+import time
+from collections.abc import Callable, Sequence
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import date, datetime
 from decimal import Decimal
 from pathlib import Path
@@ -76,6 +78,10 @@ def window_sessions(selection_session: date, n: int) -> list[date]:
     return [date(s.year, s.month, s.day) for s in sessions]
 
 
+ProgressFn = Callable[[str, int, int, int, int, float], None]
+"""progress(symbol, done, total, sessions_with_data, window_len, seconds_for_symbol)"""
+
+
 def select_universe(
     source: MarketDataSource,
     selection_session: date,
@@ -83,13 +89,18 @@ def select_universe(
     candidates: Sequence[str] = UNIV_CANDIDATES_1,
     candidate_list_version: str = UNIV_CANDIDATES_1_VERSION,
     rule: UniverseRule = UNIV_1,
+    max_workers: int = 4,
+    progress: ProgressFn | None = None,
 ) -> UniverseDecision:
+    """Select the universe. ``max_workers`` symbols are fetched concurrently (ThetaData
+    Standard allows 4 concurrent requests); the result does not depend on it."""
     as_of = et_at(selection_session, *rule.as_of_hhmm)
     view = PointInTimeView(source, as_of)
     window = window_sessions(selection_session, rule.window_sessions)
-    used: list[OptionVolume] = []
-    scores: list[CandidateScore] = []
-    for sym in sorted(set(candidates)):
+    symbols = sorted(set(candidates))
+
+    def fetch(sym: str) -> tuple[str, list[OptionVolume], float]:
+        t0 = time.perf_counter()
         vols: list[OptionVolume] = []
         for d in window:
             try:
@@ -100,6 +111,26 @@ def select_universe(
                 v = None  # vendor error for one day counts as missing data
             if v is not None:
                 vols.append(v)
+        return sym, vols, time.perf_counter() - t0
+
+    by_symbol: dict[str, list[OptionVolume]] = {}
+    with ThreadPoolExecutor(max_workers=max(1, max_workers)) as pool:
+        futures = [pool.submit(fetch, sym) for sym in symbols]
+        try:
+            for fut in as_completed(futures):
+                sym, vols, secs = fut.result()  # re-raises LookaheadError
+                by_symbol[sym] = vols
+                if progress is not None:
+                    progress(sym, len(by_symbol), len(symbols), len(vols), len(window), secs)
+        except BaseException:
+            for f in futures:
+                f.cancel()
+            raise
+
+    used: list[OptionVolume] = []
+    scores: list[CandidateScore] = []
+    for sym in symbols:  # fixed order: the decision is independent of completion order
+        vols = by_symbol[sym]
         used.extend(vols)
         if len(vols) < rule.min_sessions_with_data:
             scores.append(
