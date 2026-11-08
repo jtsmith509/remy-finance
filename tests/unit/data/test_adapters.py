@@ -253,3 +253,15 @@ def test_fixture_round_trip_and_composite(tmp_path: Path) -> None:
     comp = CompositeSource(quotes=again, events=again)
     assert comp.dividends("XYZ", f.AS_OF) and comp.rates(f.AS_OF)
     assert comp.list_contracts("XYZ", f.AS_OF)[0].osi_symbol == f.contract().osi_symbol
+
+
+def test_polygon_default_base_url_is_massive(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("POLYGON_BASE_URL", raising=False)
+    seen: list[str] = []
+
+    def h(req: httpx.Request) -> httpx.Response:
+        seen.append(req.url.host)
+        return httpx.Response(200, json={"results": []})
+
+    PolygonSource("k", transport=httpx.MockTransport(h)).dividends("KO", TS)
+    assert seen == ["api.massive.com"]

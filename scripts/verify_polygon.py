@@ -27,7 +27,7 @@ from typing import Any
 
 import httpx
 
-from remy_finance.data.polygon import PolygonError, PolygonSource
+from remy_finance.data.polygon import DEFAULT_BASE_URL, PolygonError, PolygonSource
 
 
 def polygon_daily_closes(
@@ -84,7 +84,7 @@ def main() -> int:
     if not key:
         print("POLYGON_API_KEY is not set", file=sys.stderr)
         return 2
-    base = os.environ.get("POLYGON_BASE_URL", "https://api.polygon.io").rstrip("/")
+    base = os.environ.get("POLYGON_BASE_URL", DEFAULT_BASE_URL).rstrip("/")
     now = datetime.now(UTC)
     since = now.date() - timedelta(days=365 * a.years)
     src = PolygonSource(key, base_url=base)

@@ -21,6 +21,9 @@ import httpx
 from remy_finance.core import CorporateAction, CorporateActionType, DividendEvent, DividendType
 from remy_finance.data.timeutil import et_at
 
+# Polygon.io rebranded as Massive on 2025-10-30; api.polygon.io still works for now.
+DEFAULT_BASE_URL = "https://api.massive.com"
+
 ORDINARY_CODES = {"CD"}  # Polygon dividend_type: CD regular; SC special; LT/ST capital gains
 
 
@@ -41,7 +44,7 @@ class PolygonSource:
         key = api_key or os.environ.get("POLYGON_API_KEY")
         if not key:
             raise PolygonError("POLYGON_API_KEY is not set")
-        url = base_url or os.environ.get("POLYGON_BASE_URL", "https://api.polygon.io")
+        url = base_url or os.environ.get("POLYGON_BASE_URL", DEFAULT_BASE_URL)
         self._client = httpx.Client(
             base_url=url.rstrip("/"),
             headers={"Authorization": f"Bearer {key}"},
