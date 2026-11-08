@@ -5,15 +5,19 @@ Each test is named after its finding. They failed on the reviewed commit aeda0c2
 
 from __future__ import annotations
 
+import threading
+import time
 from collections.abc import Sequence
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal, localcontext
+from pathlib import Path
 
 import httpx
 import pytest
 from hypothesis import given
 from hypothesis import strategies as st
 
+import remy_finance.snapshots.store as store_mod
 from remy_finance.core import (
     FEES_1,
     CorporateAction,
@@ -21,6 +25,7 @@ from remy_finance.core import (
     DividendEvent,
     LookaheadError,
     MarketState,
+    Mode,
     OptionContract,
     OptionQuote,
     Right,
@@ -33,7 +38,9 @@ from remy_finance.core import (
 from remy_finance.data import FixtureSource
 from remy_finance.data.polygon import PolygonSource
 from remy_finance.execution.settlement import settle_at_expiration
-from remy_finance.snapshots.builder import build_prospective
+from remy_finance.snapshots.builder import build_prospective, build_replay
+from remy_finance.snapshots.schedule import SnapshotKind
+from remy_finance.snapshots.store import GapRecordedError, SnapshotExistsError, SnapshotStore
 from tests import factories as f
 from tests.factories import EXP, bull_call_spread, leg
 
@@ -195,3 +202,126 @@ def test_f06_polygon_keeps_splits_when_dividend_feed_fails() -> None:
     acts = src.corporate_actions("XYZ", datetime(2026, 11, 6, 15, tzinfo=UTC))
     assert [a.action_type for a in acts] == [CorporateActionType.SPLIT]
     assert any("special dividends unavailable" in s for s in src.skipped)
+
+
+# ------------------------------------------------ F01: one terminal state per slot
+
+DAY = f.AS_OF.date()
+
+
+def _replay_board(version: str) -> MarketState:
+    src = FixtureSource([f.option_quote(at=f.AS_OF), f.underlying_quote(at=f.AS_OF)])
+    return build_replay(src, DAY, Session.OPEN, universe_version=version, underlyings=("XYZ",))
+
+
+def _slow_frames(monkeypatch: pytest.MonkeyPatch, pause: float = 0.3) -> None:
+    real = store_mod._options_frame
+
+    def slow(quotes):  # type: ignore[no-untyped-def]
+        time.sleep(pause)  # widen the window between the slot checks and publication
+        return real(quotes)
+
+    monkeypatch.setattr(store_mod, "_options_frame", slow)
+
+
+def test_f01_snapshot_slot_has_only_one_concurrent_winner(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _slow_frames(monkeypatch)
+    store = SnapshotStore(tmp_path)
+    boards = [_replay_board("U-A"), _replay_board("U-B")]  # different content, same slot
+    outcomes: list[str] = []
+    barrier = threading.Barrier(2)
+
+    def go(board: MarketState) -> None:
+        barrier.wait()
+        try:
+            store.write(board)
+            outcomes.append("stored")
+        except SnapshotExistsError:
+            outcomes.append("refused")
+
+    threads = [threading.Thread(target=go, args=(b,)) for b in boards]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert sorted(outcomes) == ["refused", "stored"]
+    assert (
+        store.find(Mode.REPLAY, DAY, Session.OPEN, SnapshotKind.DECISION) is not None
+    )  # exactly one
+
+
+def test_f01_gap_and_snapshot_cannot_both_commit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = SnapshotStore(tmp_path)
+    real = store_mod._options_frame
+    gap_outcome: list[str] = []
+    blocked: list[bool] = []
+
+    def record() -> None:
+        try:
+            store.record_gap(DAY, Session.OPEN, SnapshotKind.DECISION, "late")
+            gap_outcome.append("gap")
+        except SnapshotExistsError:
+            gap_outcome.append("refused")
+
+    def interleave(quotes):  # type: ignore[no-untyped-def]
+        t = threading.Thread(target=record)  # a competing job tries to record a gap mid-write
+        t.start()
+        t.join(timeout=0.3)
+        blocked.append(t.is_alive())  # it must be waiting on the slot lock
+        interleave.thread = t  # type: ignore[attr-defined]
+        return real(quotes)
+
+    monkeypatch.setattr(store_mod, "_options_frame", interleave)
+    board = build_prospective(
+        _Live(),
+        FixtureSource(),
+        Session.OPEN,
+        universe_version="U",
+        underlyings=("XYZ",),
+        clock=lambda: LIVE_AT,
+    )
+    store.write(board)
+    interleave.thread.join()  # type: ignore[attr-defined]
+    assert blocked == [True]
+    assert gap_outcome == ["refused"]
+    assert not store.has_gap(DAY, Session.OPEN, SnapshotKind.DECISION)
+    assert store.find(Mode.PROSPECTIVE, DAY, Session.OPEN, SnapshotKind.DECISION) is not None
+
+
+def test_f01_snapshot_refused_after_gap_and_gap_is_idempotent(tmp_path: Path) -> None:
+    store = SnapshotStore(tmp_path)
+    first = store.record_gap(DAY, Session.OPEN, SnapshotKind.DECISION, "terminal down")
+    again = store.record_gap(DAY, Session.OPEN, SnapshotKind.DECISION, "other reason")
+    assert again == first and len(store.gaps()) == 1
+    board = build_prospective(
+        _Live(),
+        FixtureSource(),
+        Session.OPEN,
+        universe_version="U",
+        underlyings=("XYZ",),
+        clock=lambda: LIVE_AT,
+    )
+    with pytest.raises(GapRecordedError):
+        store.write(board)
+
+
+def test_f01_interrupted_gap_write_leaves_no_gap(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = SnapshotStore(tmp_path)
+
+    def boom(fd: int) -> None:
+        raise OSError("disk full")
+
+    monkeypatch.setattr(store_mod.os, "fsync", boom)
+    with pytest.raises(OSError):
+        store.record_gap(DAY, Session.OPEN, SnapshotKind.DECISION, "late")
+    monkeypatch.undo()
+    assert not store.has_gap(DAY, Session.OPEN, SnapshotKind.DECISION)
+    assert not list(tmp_path.rglob("*.partial"))
+    store.record_gap(DAY, Session.OPEN, SnapshotKind.DECISION, "late")  # retry works
+    assert store.has_gap(DAY, Session.OPEN, SnapshotKind.DECISION)

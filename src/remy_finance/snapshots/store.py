@@ -4,7 +4,7 @@ Layout under ``root`` (normally ``data/snapshots``)::
 
     prospective/2026-11-06/OPEN-DECISION-<id16>/{options.parquet, board.json, manifest.json}
     replay/...
-    prospective/gaps.jsonl
+    prospective/2026-11-09/OPEN-DECISION.gap.json        (a missed slot; DR-0024)
 
 - ``options.parquet``: one row per option quote, every number as a canonical string
   (no floats). ``board.json``: the canonical JSON of the board without option quotes.
@@ -12,16 +12,21 @@ Layout under ``root`` (normally ``data/snapshots``)::
 - Write-once: a snapshot for the same (mode, date, session, kind) is never overwritten.
 - A missed prospective snapshot gets a gap record; once a gap is recorded, that slot can
   never be filled (no backfill into the prospective record).
+- Slot state is checked and published under a per-slot cross-process lock, so a slot ends
+  with at most one terminal state: one snapshot or one gap (DR-0024).
 - Replay and prospective live in separate trees and never mix.
 """
 
 from __future__ import annotations
 
+import fcntl
 import hashlib
 import json
 import os
 import shutil
 import tempfile
+from collections.abc import Iterator
+from contextlib import contextmanager
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -88,6 +93,23 @@ class GapRecord(Record):
     kind: SnapshotKind
     reason: str = Field(min_length=1)
     recorded_at: UtcDatetime
+
+
+def _publish_file(path: Path, text: str) -> None:
+    """Write ``text`` to ``path`` atomically and never overwrite: temp file + fsync, then a
+    hard link (which fails if ``path`` exists), then remove the temp name."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_name = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".partial", dir=path.parent)
+    tmp = Path(tmp_name)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(text)
+            fh.flush()
+            os.fsync(fh.fileno())
+        tmp.chmod(0o444)
+        os.link(tmp, path)
+    finally:
+        tmp.unlink(missing_ok=True)
 
 
 def _sha256(path: Path) -> str:
@@ -185,8 +207,30 @@ class SnapshotStore:
     def _mode_dir(self, mode: Mode) -> Path:
         return self.root / mode.value.lower()
 
-    def _gap_file(self) -> Path:
-        return self._mode_dir(Mode.PROSPECTIVE) / "gaps.jsonl"
+    def _day_dir(self, mode: Mode, session_date: date) -> Path:
+        return self._mode_dir(mode) / session_date.isoformat()
+
+    def _gap_path(self, session_date: date, session: Session, kind: SnapshotKind) -> Path:
+        day = self._day_dir(Mode.PROSPECTIVE, session_date)
+        return day / f"{session.value}-{kind.value}.gap.json"
+
+    @contextmanager
+    def _slot_lock(
+        self, mode: Mode, session_date: date, session: Session, kind: SnapshotKind
+    ) -> Iterator[None]:
+        """Exclusive, cross-process lock for one (mode, date, session, kind) slot.
+
+        Every check of a slot's state and every publication into it (snapshot or gap)
+        happens while holding this lock, so a slot ends with at most one terminal state.
+        """
+        day = self._day_dir(mode, session_date)
+        day.mkdir(parents=True, exist_ok=True)
+        with (day / f".lock-{session.value}-{kind.value}").open("a") as fh:
+            fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
+            try:
+                yield
+            finally:
+                fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
 
     def find(
         self, mode: Mode, session_date: date, session: Session, kind: SnapshotKind
@@ -202,20 +246,16 @@ class SnapshotStore:
     # ------------------------------------------------------------------- gaps
 
     def gaps(self) -> list[GapRecord]:
-        path = self._gap_file()
-        if not path.exists():
+        root = self._mode_dir(Mode.PROSPECTIVE)
+        if not root.exists():
             return []
         return [
-            GapRecord.model_validate(json.loads(line))
-            for line in path.read_text().splitlines()
-            if line
+            GapRecord.from_canonical_json(p.read_text(encoding="utf-8"))
+            for p in sorted(root.glob("*/*.gap.json"))
         ]
 
     def has_gap(self, session_date: date, session: Session, kind: SnapshotKind) -> bool:
-        return any(
-            (g.session_date, g.session, g.kind) == (session_date, session, kind)
-            for g in self.gaps()
-        )
+        return self._gap_path(session_date, session, kind).exists()
 
     def record_gap(
         self,
@@ -226,30 +266,25 @@ class SnapshotStore:
         *,
         now: datetime | None = None,
     ) -> GapRecord:
-        if self.find(Mode.PROSPECTIVE, session_date, session, kind) is not None:
-            raise SnapshotExistsError(
-                "a prospective snapshot exists for this slot; it is not a gap"
+        """Mark a prospective slot as permanently missed. Idempotent; refuses if the slot
+        already holds a snapshot."""
+        with self._slot_lock(Mode.PROSPECTIVE, session_date, session, kind):
+            if self.find(Mode.PROSPECTIVE, session_date, session, kind) is not None:
+                raise SnapshotExistsError(
+                    "a prospective snapshot exists for this slot; it is not a gap"
+                )
+            path = self._gap_path(session_date, session, kind)
+            if path.exists():
+                return GapRecord.from_canonical_json(path.read_text(encoding="utf-8"))
+            gap = GapRecord(
+                session_date=session_date,
+                session=session,
+                kind=kind,
+                reason=reason,
+                recorded_at=now or datetime.now(UTC),
             )
-        if self.has_gap(session_date, session, kind):
-            return next(
-                g
-                for g in self.gaps()
-                if (g.session_date, g.session, g.kind) == (session_date, session, kind)
-            )
-        gap = GapRecord(
-            session_date=session_date,
-            session=session,
-            kind=kind,
-            reason=reason,
-            recorded_at=now or datetime.now(UTC),
-        )
-        path = self._gap_file()
-        path.parent.mkdir(parents=True, exist_ok=True)
-        with path.open("a", encoding="utf-8") as fh:
-            fh.write(gap.canonical_json() + "\n")
-            fh.flush()
-            os.fsync(fh.fileno())
-        return gap
+            _publish_file(path, gap.canonical_json())
+            return gap
 
     # ------------------------------------------------------------------ write
 
@@ -265,10 +300,6 @@ class SnapshotStore:
         session_date = et_date(state.as_of)
         scheduled = snapshot_time(session_date, state.session, kind)
         if state.mode is Mode.PROSPECTIVE:
-            if self.has_gap(session_date, state.session, kind):
-                raise GapRecordedError(
-                    "a gap is recorded for this slot; prospective snapshots are never backfilled"
-                )
             delay = state.as_of - scheduled
             if not timedelta(0) <= delay <= max_delay:
                 raise ValueError(
@@ -284,6 +315,23 @@ class SnapshotStore:
             decision = self.find(state.mode, session_date, state.session, SnapshotKind.DECISION)
             if decision is None or self.load_manifest(decision).snapshot_id != decision_snapshot_id:
                 raise ValueError("linked decision snapshot not found in this store")
+        with self._slot_lock(state.mode, session_date, state.session, kind):
+            return self._publish(state, kind, session_date, scheduled, decision_snapshot_id, now)
+
+    def _publish(
+        self,
+        state: MarketState,
+        kind: SnapshotKind,
+        session_date: date,
+        scheduled: datetime,
+        decision_snapshot_id: str | None,
+        now: datetime | None,
+    ) -> SnapshotManifest:
+        """Called with the slot lock held: re-check the slot, then publish atomically."""
+        if state.mode is Mode.PROSPECTIVE and self.has_gap(session_date, state.session, kind):
+            raise GapRecordedError(
+                "a gap is recorded for this slot; prospective snapshots are never backfilled"
+            )
         if self.find(state.mode, session_date, state.session, kind) is not None:
             raise SnapshotExistsError(
                 f"snapshot already stored for {state.mode} {session_date} {state.session} {kind}"
