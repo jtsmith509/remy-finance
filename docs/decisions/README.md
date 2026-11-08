@@ -14,5 +14,7 @@
 | [DR-0010](DR-0010-expiration-handling.md) | HOLD-1 and EXP-1 | D10 | proposed |
 | [DR-0011](DR-0011-risk-free-rate.md) | Risk-free rate source | D11 | proposed |
 | [DR-0012](DR-0012-registry-storage.md) | Registry and snapshot storage | D12 | proposed |
+| [DR-0013](DR-0013-underlying-quote-source.md) | Underlying quote source (Stock Standard) | R0.1 | proposed |
+| [DR-0014](DR-0014-dividends-corporate-actions.md) | Dividend and corporate-action source (Polygon) | R0.1 | proposed |
 
 Each record has these sections: context, options considered, decision, consequences. Status stays *proposed* until Josh confirms it. A confirmed DR is superseded only by a new, linked DR; it is never edited in place.

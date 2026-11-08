@@ -24,5 +24,9 @@ Adopt option 1.
 
 ## Consequences
 - SQLite triggers can be bypassed by someone with file access (for example, by dropping triggers). The hash chain plus the pushed export is what makes tampering *detectable*; the triggers only prevent accidents.
-- The nightly push needs a git credential on the Mac mini with push rights to this repo. **Open question for Josh:** should the export go to this repo's main branch, a dedicated `registry-export` branch, or a separate repo? Proposal: a dedicated branch, to keep main's history clean.
-- Snapshots need their own backup (for example, Time Machine or an external drive). This is listed in the `doctor` checks.
+- The nightly push needs a git credential on the Mac mini with push rights to this repo. **Owner decision (Josh, 2026-11-08):** the export goes to a dedicated **`registry-export`** branch of this repo.
+- **Owner decision (Josh, 2026-11-08), backup:** `data/` is backed up by **cloud sync**. A live SQLite file must never be synced directly, so each night the job:
+  - writes a consistent copy of each registry DB with SQLite's online backup API to `data/backup/registry-<date>.sqlite`;
+  - syncs `data/backup/` and the write-once `data/snapshots/` to the cloud folder.
+
+  The live DB and WAL files are excluded from sync. `doctor` checks that the last backup is recent. Which cloud provider to use is still to be chosen at R1.6.

@@ -20,6 +20,6 @@ Adopt option 1.
 - An `ExitPolicy` interface is left for R4.
 
 ## Consequences
-- Needs the underlying's **official closing price** on each expiration date. The R0.1 memo checks whether the Stock FREE tier provides it, for example through EOD data.
+- Needs the underlying's **official closing price** on each expiration date. R0.1 found that ThetaData stock EOD `close` looks like the regular-session close, pending a spot-check against the exchange's official close. The EOD `bid`/`ask` are taken at 17:15 ET and **must not** be used.
 - Settlement at intrinsic ignores after-hours moves and the holder's discretion near the money. PIN_RISK_APPROXIMATE marks the affected trades.
 - Treating stock from exercise as closed at the official close is slightly optimistic; in reality it would be closed the next morning. This is noted in reports.

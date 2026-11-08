@@ -14,9 +14,15 @@ MKT-1 infers forwards and discount factors from put–call parity. A risk-free r
 3. Use only parity-implied rates. That needs nothing extra, but is noisy for short tenors and fails when the parity fit fails.
 
 ## Decision
-Adopt option 1 as the order of preference. The user's ThetaData **Rate** subscription is on the FREE tier. Whether that tier serves historical daily rates is checked in R0.1 (see the memo). For each rate:
-- `public_time` = the publisher's release time for the observation date. For SOFR, that's about 08:00 ET on the next business day. For Treasury bill rates, it's end of day on the observation date.
-- A snapshot may use only the latest rate whose `public_time` ≤ `as_of`. That is typically the previous business day's value.
+Adopt option 1. R0.1 verified that ThetaData Rate FREE works at `/v3/interest_rate/history/eod` (symbols `SOFR` and `TREASURY_M1` … `TREASURY_Y30`):
+- `rate` is in **percent**, and `created` is a date only.
+- There is one row per **calendar** day, with weekends forward-filled.
+- No publication time is given.
+
+For each rate:
+- `public_time` for the row dated D is the **next business day at 09:30 ET**. That is conservative for both SOFR, published about 08:00 ET on D+1, and Treasury bill rates.
+- A snapshot may use only the latest row whose `public_time` ≤ `as_of`.
+- Weekend and holiday forward-filled rows are dropped in favour of the last business-day observation.
 
 ## Consequences
 - In MKT-1, rates are a fallback and a cross-check only. The primary discount factor comes from parity.

@@ -26,4 +26,12 @@ Adopt option 1, with a version tag (`UNIV-1`):
 - Requires historical option EOD volume per root. R0.1 checks whether ThetaData provides it.
 - Bootstrapping a replay month needs the 20 trading days before it.
 - Mid-month delistings or corporate actions remove a name from candidate generation from the effective date. The membership record is not rewritten.
-- **Open question for Josh:** please supply or approve the ≈80-name candidate list.
+- **Owner decision (Josh, 2026-11-08):** Claude drafts the candidate list and Josh approves it before R0.5. The draft is below.
+
+## Draft candidate list `UNIV-CANDIDATES-1` (awaiting Josh's approval)
+
+Drafted 2026-11-08 from general knowledge of US option liquidity. **Check each ticker for current listing and symbol changes before approval.** There are 80 names in total.
+
+**ETFs (24):** SPY, QQQ, IWM, DIA, XLF, XLE, XLK, XLV, XLI, XLY, XLP, XLU, XLB, XLC, SMH, KRE, XBI, GLD, SLV, GDX, TLT, HYG, EEM, FXI
+
+**Single names (56):** AAPL, MSFT, NVDA, AMZN, GOOGL, META, TSLA, AVGO, AMD, NFLX, ORCL, CRM, ADBE, INTC, MU, QCOM, TSM, ARM, SMCI, PLTR, UBER, SHOP, COIN, MSTR, HOOD, SOFI, PYPL, BABA, JPM, BAC, C, WFC, GS, V, MA, XOM, CVX, BA, CAT, DE, F, GM, RIVN, DIS, T, VZ, PFE, MRK, JNJ, LLY, UNH, ABBV, KO, WMT, COST, HD

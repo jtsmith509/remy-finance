@@ -21,4 +21,4 @@ Adopt option 1, with `latency = 5 min` recorded in the fill-rule version (`FILL-
 ## Consequences
 - Every session needs **two** chain retrievals: the snapshot and the execution quote. That roughly doubles storage and API calls. Execution quotes are stored like snapshots, as write-once and content-addressed, and linked to the decision snapshot.
 - The execution quote contains only the contracts needed for that session's orders or exits. It does not need to be a full chain, but storing the full chain is simpler and supports audits. The R0.1 memo includes it in the storage estimate.
-- **Open question for Josh:** spec §11 says fills happen "at the evaluation snapshot". This DR reads the execution quote as the evaluation snapshot for fills. Please confirm this reading is consistent with the spec; otherwise it's a brief/spec disagreement.
+- **Owner decision (Josh, 2026-11-08):** the brief governs. The +5-minute execution quote is the "evaluation snapshot" for fills in spec §11's sense. A clarifying note goes into the next spec revision.

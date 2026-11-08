@@ -22,7 +22,8 @@ Adopt option 1 (`ASSIGN-1`). **Consequences rule:**
 - Each assumed assignment is an `ASSIGNMENT_ASSUMED` journal event.
 
 ## Consequences
-- Requires dividends **known as of the snapshot**, which means a declaration time or `public_time`. See the R0.1 memo on whether ThetaData supplies it.
-- Requires underlying bid/ask at the next snapshot to close stock. See the R0.1 memo for underlying quote availability on the Stock FREE tier.
-- **Open question for Josh:** what if a forced close's option legs fail the FILL-1 size check? Proposal: retry at each subsequent execution quote (as for exits). Stock is assumed always fillable at the bid or ask.
+- Requires dividends **known as of the snapshot**. R0.1 found that ThetaData has none; see DR-0014.
+- Requires underlying bid/ask at the next snapshot to close stock. R0.1 found that the Stock FREE tier lacks it; see DR-0013.
+- **Owner decision (Josh, 2026-11-08), failed forced close:** stock is closed at once, assumed always fillable at the underlying bid or ask. Any option leg that fails the FILL-1 size check is retried at each subsequent execution quote until expiration, where EXP-1 applies.
+- Dividend data comes from DR-0014 (Polygon/Massive, `public_time` = declaration date at 16:00 ET). The underlying bid/ask comes from DR-0013 (ThetaData Stock Standard).
 - Fixtures from handoff R0.9 become unit tests in R0.9.

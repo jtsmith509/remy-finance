@@ -18,5 +18,5 @@ Adopt option 1. Fees are a frozen config object (`FeeSchedule(version="FEES-1", 
 
 ## Consequences
 - The R0.6 fixtures in the handoff assume exactly these values.
-- Under ASSIGN-1 and EXP-1, stock that results from assignment is closed. FEES-1 charges no stock commission. **Open question for Josh:** should stock closes carry a per-share fee?
+- Under ASSIGN-1 and EXP-1, stock that results from assignment is closed. **Owner decision (Josh, 2026-11-08):** stock trades carry a **$0** commission (`stock_per_share = 0`). Slippage is captured by crossing the stock bid/ask.
 - Regulatory pass-through fees (≈$0.02–0.05 per contract) are ignored. That is slightly optimistic and is noted in reports.
