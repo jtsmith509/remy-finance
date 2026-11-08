@@ -24,6 +24,7 @@ from enum import StrEnum
 from pydantic import Field
 
 from remy_finance.core import DividendEvent, Leg, LookaheadError, Record, Right, Side
+from remy_finance.core.exact import exact_decimal
 from remy_finance.core.payoff import intrinsic
 from remy_finance.core.types import NonNegDec, UtcDatetime
 
@@ -74,7 +75,8 @@ def known_dividend_on(
                 f"dividend {d.symbol} ex {d.ex_date} public at {d.public_time} > as_of {as_of}"
             )
         if d.symbol == symbol and d.ex_date == ex_date:
-            total += d.amount
+            with exact_decimal(total, d.amount):
+                total += d.amount
     return total
 
 
@@ -93,7 +95,8 @@ def assess_short_leg(
         raise ValueError("ASSIGN-1 applies to short legs only")
     c = leg.contract
     iv = intrinsic(c.right, c.strike, underlying_price)
-    extrinsic = ZERO if option_bid is None else max(ZERO, option_bid - iv)
+    with exact_decimal(iv, *([option_bid] if option_bid is not None else [])):
+        extrinsic = ZERO if option_bid is None else max(ZERO, option_bid - iv)
     itm = iv > 0
     dividend = known_dividend_on(known_dividends, c.underlying, next_session, as_of)
 
@@ -151,16 +154,18 @@ def assignment_consequence(
         raise ValueError("contracts must be >= 1")
     c = leg.contract
     shares = contracts * c.multiplier
-    if c.right is Right.CALL:  # we deliver stock we don't own: short stock
-        stock, cash = -shares, c.strike * shares
-    else:  # we must buy stock at the strike: long stock
-        stock, cash = shares, -c.strike * shares
-    owed = dividend_per_share_before_close * shares if stock < 0 else ZERO
+    # short call assigned: deliver stock we don't own (short stock), receive the strike;
+    # short put assigned: buy stock at the strike (long stock), pay the strike
+    stock = -shares if c.right is Right.CALL else shares
+    with exact_decimal(c.strike, dividend_per_share_before_close, assignment_fee_per_contract):
+        cash = c.strike * shares * (1 if stock < 0 else -1)
+        owed = dividend_per_share_before_close * shares if stock < 0 else ZERO
+        fees_due = assignment_fee_per_contract * contracts
     return AssignmentConsequence(
         osi_symbol=c.osi_symbol,
         contracts=contracts,
         stock_shares=stock,
         strike_cash=cash,
-        assignment_fees=assignment_fee_per_contract * contracts,
+        assignment_fees=fees_due,
         dividend_owed=owed,
     )

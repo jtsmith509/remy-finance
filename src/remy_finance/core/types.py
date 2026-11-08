@@ -59,3 +59,22 @@ UtcDatetime = Annotated[
     datetime, BeforeValidator(_reject_numeric_datetime), AfterValidator(_require_aware_utc)
 ]
 """Timezone-aware datetime, normalized to UTC."""
+
+
+def to_decimal(value: Decimal | int | str) -> Decimal:
+    """Strict conversion at public factory boundaries: Decimal, int or numeric str only.
+
+    Floats and bools are rejected *before* conversion (a float has already lost the exact
+    value); non-finite results are rejected too.
+    """
+    _reject_float_and_bool(value)
+    if isinstance(value, Decimal):
+        result = value
+    elif isinstance(value, int | str):
+        try:
+            result = Decimal(value)
+        except ArithmeticError as e:
+            raise ValueError(f"not a decimal number: {value!r}") from e
+    else:
+        raise ValueError(f"Decimal field rejects {type(value).__name__} input {value!r}")
+    return _finite(result)

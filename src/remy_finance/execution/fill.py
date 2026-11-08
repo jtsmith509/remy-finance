@@ -21,6 +21,7 @@ from enum import StrEnum
 from pydantic import Field
 
 from remy_finance.core import FEES_1, FeeSchedule, Leg, OptionQuote, Record, Side, UnderlyingQuote
+from remy_finance.core.exact import exact_decimal
 from remy_finance.core.types import NonNegDec
 
 ZERO = Decimal(0)
@@ -135,12 +136,15 @@ def fill_order(
             )
         )
         sign = -1 if side is TradeSide.BUY else 1
-        cash += sign * price * contracts * c.multiplier
+        with exact_decimal(cash, price):
+            cash += sign * price * contracts * c.multiplier
 
     filled = all(r.filled for r in results)
     total_contracts = sum(r.contracts for r in results)
     fee = fees.option_fees(total_contracts) if filled else ZERO
     premium = cash if filled else ZERO
+    with exact_decimal(premium, fee):
+        net = premium - fee
     return OrderFill(
         rule_version=rule.version,
         fee_version=fees.version,
@@ -150,7 +154,7 @@ def fill_order(
         filled=filled,
         premium_cash=premium,
         fees=fee,
-        net_cash=premium - fee,
+        net_cash=net,
     )
 
 
@@ -174,10 +178,6 @@ def close_stock(
         traded, price = -position_shares, quote.ask
     if price <= 0:
         raise ValueError(f"no usable underlying price to close {quote.symbol}")
-    return StockFill(
-        symbol=quote.symbol,
-        shares=traded,
-        price=price,
-        cash=-traded * price,
-        fees=fees.stock_per_share * abs(traded),
-    )
+    with exact_decimal(price, fees.stock_per_share):
+        cash, fee = -traded * price, fees.stock_per_share * abs(traded)
+    return StockFill(symbol=quote.symbol, shares=traded, price=price, cash=cash, fees=fee)

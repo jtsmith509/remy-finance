@@ -18,8 +18,9 @@ from enum import StrEnum
 from pydantic import Field
 
 from remy_finance.core import FEES_1, FeeSchedule, Leg, Record, Side
-from remy_finance.core.payoff import intrinsic
-from remy_finance.core.types import NonNegDec
+from remy_finance.core.exact import exact_decimal
+from remy_finance.core.payoff import intrinsic, strikes_of
+from remy_finance.core.types import NonNegDec, to_decimal
 
 ZERO = Decimal(0)
 
@@ -73,6 +74,7 @@ def settle_at_expiration(
         raise ValueError("quantity must be >= 1")
     if not legs:
         raise ValueError("nothing to settle")
+    official_close = to_decimal(official_close)
     if official_close < 0:
         raise ValueError("official close must be >= 0")
     for leg in legs:
@@ -81,6 +83,18 @@ def settle_at_expiration(
                 f"{leg.contract.osi_symbol} expires {leg.contract.expiration}, not {expiration}"
             )
 
+    with exact_decimal(official_close, *strikes_of(legs), fees.exercise_assignment_per_contract):
+        return _settle(legs, quantity, expiration, official_close, fees, rule)
+
+
+def _settle(
+    legs: Sequence[Leg],
+    quantity: int,
+    expiration: date,
+    official_close: Decimal,
+    fees: FeeSchedule,
+    rule: ExpirationRule,
+) -> ExpirationSettlement:
     results: list[LegSettlement] = []
     exercised_contracts = 0
     pin = False

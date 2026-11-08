@@ -24,10 +24,11 @@ from pydantic import Field, model_validator
 
 from remy_finance.core import payoff
 from remy_finance.core.enums import Priceability, StructureType
+from remy_finance.core.exact import exact_decimal
 from remy_finance.core.fees import FeeSchedule
 from remy_finance.core.instruments import Leg
 from remy_finance.core.record import Record
-from remy_finance.core.types import NonNegDec
+from remy_finance.core.types import NonNegDec, to_decimal
 
 
 class Structure(Record):
@@ -59,13 +60,16 @@ class Structure(Record):
             raise ValueError("non-standard-deliverable contracts are excluded")
 
         low, high = payoff.payoff_extremes(self.legs, self.net_premium)  # may raise
-        max_loss = max(-low, payoff.ZERO)
-        max_gain = None if high is None else max(high, payoff.ZERO)
-        expected = {
-            "max_loss": max_loss,
-            "max_gain": max_gain,
-            "capital_at_risk": max_loss + self.entry_fees + self.exit_fees,
-        }
+        with exact_decimal(
+            low, self.entry_fees, self.exit_fees, *([high] if high is not None else [])
+        ):
+            max_loss = max(-low, payoff.ZERO)
+            max_gain = None if high is None else max(high, payoff.ZERO)
+            expected = {
+                "max_loss": max_loss,
+                "max_gain": max_gain,
+                "capital_at_risk": max_loss + self.entry_fees + self.exit_fees,
+            }
         for name, value in expected.items():
             if getattr(self, name) != value:
                 raise ValueError(f"{name}={getattr(self, name)} but legs and prices imply {value}")
@@ -97,8 +101,14 @@ class Structure(Record):
         """Net P&L held to expiration (HOLD-1/EXP-1): payoff - premium - all fees."""
         if quantity < 0:
             raise ValueError("quantity must be >= 0")
-        per_unit = self.payoff_at_expiry(s) - self.net_premium - self.entry_fees - self.exit_fees
-        return per_unit * quantity
+        s = to_decimal(s)
+        with exact_decimal(
+            s, *self.entry_prices, self.entry_fees, self.exit_fees, *payoff.strikes_of(self.legs)
+        ):
+            per_unit = (
+                self.payoff_at_expiry(s) - self.net_premium - self.entry_fees - self.exit_fees
+            )
+            return per_unit * quantity
 
     # ------------------------------------------------------------------ builder
 
@@ -114,13 +124,15 @@ class Structure(Record):
     ) -> Structure:
         """Build a structure, computing fees and risk numbers. Raises UndefinedRiskError."""
         legs_t = tuple(legs)
-        prices = tuple(Decimal(p) for p in entry_prices)
+        prices = tuple(to_decimal(p) for p in entry_prices)  # floats/bools rejected
         n_contracts = payoff.contracts_per_unit(legs_t)
         entry_fees = fees.option_fees(n_contracts)
         exit_fees = fees.option_fees(n_contracts) if closing_trade_required else Decimal(0)
         premium = payoff.net_premium(legs_t, prices)
         low, high = payoff.payoff_extremes(legs_t, premium)
-        max_loss = max(-low, payoff.ZERO)
+        with exact_decimal(low, entry_fees, exit_fees):
+            max_loss = max(-low, payoff.ZERO)
+            capital_at_risk = max_loss + entry_fees + exit_fees
         return cls(
             legs=legs_t,
             structure_type=structure_type,
@@ -128,7 +140,7 @@ class Structure(Record):
             fee_version=fees.version,
             entry_fees=entry_fees,
             exit_fees=exit_fees,
-            capital_at_risk=max_loss + entry_fees + exit_fees,
+            capital_at_risk=capital_at_risk,
             max_loss=max_loss,
             max_gain=None if high is None else max(high, payoff.ZERO),
         )

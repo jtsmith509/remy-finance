@@ -12,6 +12,7 @@ from collections.abc import Sequence
 from decimal import Decimal
 
 from remy_finance.core.enums import Right
+from remy_finance.core.exact import exact_decimal
 from remy_finance.core.instruments import Leg
 
 ZERO = Decimal(0)
@@ -25,30 +26,38 @@ def intrinsic(right: Right, strike: Decimal, s: Decimal) -> Decimal:
     """Per-share intrinsic value at expiry: max(S-K, 0) for calls, max(K-S, 0) for puts."""
     if s < 0:
         raise ValueError("underlying price must be >= 0")
-    return max(s - strike, ZERO) if right is Right.CALL else max(strike - s, ZERO)
+    with exact_decimal(s, strike):
+        return max(s - strike, ZERO) if right is Right.CALL else max(strike - s, ZERO)
+
+
+def strikes_of(legs: Sequence[Leg]) -> list[Decimal]:
+    return [leg.contract.strike for leg in legs]
 
 
 def leg_payoff(leg: Leg, s: Decimal) -> Decimal:
     c = leg.contract
-    return int(leg.side) * leg.ratio * c.multiplier * intrinsic(c.right, c.strike, s)
+    with exact_decimal(s, c.strike):
+        return int(leg.side) * leg.ratio * c.multiplier * intrinsic(c.right, c.strike, s)
 
 
 def terminal_payoff(legs: Sequence[Leg], s: Decimal) -> Decimal:
-    """Sum of leg payoffs at S_T = s (before premiums and fees)."""
-    return sum((leg_payoff(leg, s) for leg in legs), ZERO)
+    """Sum of leg payoffs at S_T = s (before premiums and fees), computed exactly."""
+    with exact_decimal(s, *strikes_of(legs)):
+        return sum((leg_payoff(leg, s) for leg in legs), ZERO)
 
 
 def net_premium(legs: Sequence[Leg], prices: Sequence[Decimal]) -> Decimal:
     """Net premium paid per unit: positive = debit, negative = credit."""
     if len(legs) != len(prices):
         raise ValueError("one price per leg required")
-    return sum(
-        (
-            int(leg.side) * leg.ratio * leg.contract.multiplier * p
-            for leg, p in zip(legs, prices, strict=True)
-        ),
-        ZERO,
-    )
+    with exact_decimal(*prices):
+        return sum(
+            (
+                int(leg.side) * leg.ratio * leg.contract.multiplier * p
+                for leg, p in zip(legs, prices, strict=True)
+            ),
+            ZERO,
+        )
 
 
 def contracts_per_unit(legs: Sequence[Leg]) -> int:
@@ -79,7 +88,8 @@ def payoff_extremes(legs: Sequence[Leg], premium: Decimal) -> tuple[Decimal, Dec
     slope = slope_above_highest_strike(legs)
     if slope < 0:
         raise UndefinedRiskError(f"loss is unbounded as S_T -> inf (slope {slope} per $1)")
-    values = [terminal_payoff(legs, s) - premium for s in evaluation_points(legs)]
+    with exact_decimal(premium, *strikes_of(legs)):
+        values = [terminal_payoff(legs, s) - premium for s in evaluation_points(legs)]
     low = min(values)
     high: Decimal | None = None if slope > 0 else max(values)
     return low, high

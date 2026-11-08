@@ -11,7 +11,7 @@ from pydantic import Field, field_validator, model_validator
 
 from remy_finance.core.enums import Right, Side, Style
 from remy_finance.core.record import Record
-from remy_finance.core.types import PosDec
+from remy_finance.core.types import PosDec, to_decimal
 
 _OSI_TAIL = re.compile(r"^(\d{6})([CP])(\d{8})$")
 _OSI_ROOT = re.compile(r"^[A-Z][A-Z0-9.]{0,5}$")
@@ -104,7 +104,7 @@ class OptionContract(Record):
         multiplier: int = 100,
         standard_deliverable: bool = True,
     ) -> OptionContract:
-        k = Decimal(strike)
+        k = to_decimal(strike)  # floats/bools rejected
         return cls(
             osi_symbol=build_osi(root or underlying, expiration, right, k),
             underlying=underlying,
