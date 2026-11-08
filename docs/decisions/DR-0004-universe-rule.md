@@ -1,6 +1,6 @@
 # DR-0004: Point-in-time universe rule
 
-- **Status:** proposed
+- **Status:** accepted (confirmed by Josh, 2026-11-08, at Stop Point A)
 - **Date:** 2026-11-08
 - **Source:** Handoff Section 2, default D4
 - **Stage:** R0 (R0.5)
@@ -28,9 +28,9 @@ Adopt option 1, with a version tag (`UNIV-1`):
 - Mid-month delistings or corporate actions remove a name from candidate generation from the effective date. The membership record is not rewritten.
 - **Owner decision (Josh, 2026-11-08):** Claude drafts the candidate list and Josh approves it before R0.5. The draft is below.
 
-## Draft candidate list `UNIV-CANDIDATES-1` (awaiting Josh's approval)
+## Candidate list `UNIV-CANDIDATES-1` (approved by Josh, 2026-11-08)
 
-Drafted 2026-11-08 from general knowledge of US option liquidity. **Check each ticker for current listing and symbol changes before approval.** There are 80 names in total.
+Drafted 2026-11-08 from general knowledge of US option liquidity. At R0.5, each ticker's option data is checked in ThetaData. Any missing or renamed ticker is reported before the first universe is built, and a change to the list is a new version (`UNIV-CANDIDATES-2`). There are 80 names in total.
 
 **ETFs (24):** SPY, QQQ, IWM, DIA, XLF, XLE, XLK, XLV, XLI, XLY, XLP, XLU, XLB, XLC, SMH, KRE, XBI, GLD, SLV, GDX, TLT, HYG, EEM, FXI
 

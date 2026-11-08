@@ -1,6 +1,6 @@
 # DR-0008: Candidate bounds MOVEGEN-1
 
-- **Status:** proposed
+- **Status:** accepted (confirmed by Josh, 2026-11-08, at Stop Point A)
 - **Date:** 2026-11-08
 - **Source:** Handoff Section 2, default D8
 - **Stage:** R0 (R0.7)

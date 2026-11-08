@@ -1,6 +1,6 @@
 # DR-0013: Underlying quote source
 
-- **Status:** proposed (the option was chosen by Josh on 2026-11-08; awaiting confirmation of this record)
+- **Status:** accepted (confirmed by Josh, 2026-11-08, at Stop Point A)
 - **Date:** 2026-11-08
 - **Source:** R0.1 data verification (check 2); amends DR-0009 and the handoff §4 `UnderlyingQuote` data contract
 - **Stage:** R0

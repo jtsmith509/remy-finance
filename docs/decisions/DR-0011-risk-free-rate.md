@@ -1,6 +1,6 @@
 # DR-0011: Risk-free rate source
 
-- **Status:** proposed
+- **Status:** accepted (confirmed by Josh, 2026-11-08, at Stop Point A)
 - **Date:** 2026-11-08
 - **Source:** Handoff Section 2, default D11
 - **Stage:** R0 (R0.3) / R1 (R1.4)

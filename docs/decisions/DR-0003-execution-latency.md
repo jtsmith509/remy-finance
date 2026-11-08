@@ -1,6 +1,6 @@
 # DR-0003: Execution latency and execution quote
 
-- **Status:** proposed
+- **Status:** accepted (confirmed by Josh, 2026-11-08, at Stop Point A)
 - **Date:** 2026-11-08
 - **Source:** Handoff Section 2, default D3
 - **Stage:** R0/R1

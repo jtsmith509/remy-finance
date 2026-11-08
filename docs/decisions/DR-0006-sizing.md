@@ -1,6 +1,6 @@
 # DR-0006: Paper sizing rule
 
-- **Status:** proposed
+- **Status:** accepted (confirmed by Josh, 2026-11-08, at Stop Point A)
 - **Date:** 2026-11-08
 - **Source:** Handoff Section 2, default D6
 - **Stage:** R1

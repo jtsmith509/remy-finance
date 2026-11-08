@@ -1,6 +1,6 @@
 # DR-0014: Dividend and corporate-action source
 
-- **Status:** proposed (the options were chosen by Josh on 2026-11-08; awaiting confirmation of this record)
+- **Status:** accepted (confirmed by Josh, 2026-11-08, at Stop Point A)
 - **Date:** 2026-11-08
 - **Source:** R0.1 data verification (check 3); supports DR-0009 (ASSIGN-1 dividend rule) and handoff §4 (`DividendEvent`, `CorporateAction`, exclusion of non-standard deliverables)
 - **Stage:** R0

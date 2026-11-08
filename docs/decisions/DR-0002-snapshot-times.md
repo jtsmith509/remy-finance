@@ -1,6 +1,6 @@
 # DR-0002: Snapshot times
 
-- **Status:** proposed
+- **Status:** accepted (confirmed by Josh, 2026-11-08, at Stop Point A)
 - **Date:** 2026-11-08
 - **Source:** Handoff Section 2, default D2
 - **Stage:** R0

@@ -1,6 +1,6 @@
 # DR-0009: Early-assignment threshold ASSIGN-1
 
-- **Status:** proposed
+- **Status:** accepted (confirmed by Josh, 2026-11-08, at Stop Point A)
 - **Date:** 2026-11-08
 - **Source:** Handoff Section 2, default D9, and the consequences rule in handoff §5 R0.9
 - **Stage:** R0 (R0.9)

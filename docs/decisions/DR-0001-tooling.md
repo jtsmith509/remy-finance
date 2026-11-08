@@ -1,6 +1,6 @@
 # DR-0001: Tooling and core libraries
 
-- **Status:** proposed
+- **Status:** accepted (confirmed by Josh, 2026-11-08, at Stop Point A)
 - **Date:** 2026-11-08
 - **Source:** Handoff Section 2, default D1
 - **Stage:** R0

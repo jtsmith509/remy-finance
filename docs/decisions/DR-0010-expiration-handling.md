@@ -1,6 +1,6 @@
 # DR-0010: Baseline exit policy HOLD-1 and expiration settlement EXP-1
 
-- **Status:** proposed
+- **Status:** accepted (confirmed by Josh, 2026-11-08, at Stop Point A)
 - **Date:** 2026-11-08
 - **Source:** Handoff Section 2, default D10, and handoff §5 R0.10, §6 R1.3
 - **Stage:** R0 (R0.10) / R1 (R1.3)

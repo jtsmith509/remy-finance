@@ -1,6 +1,6 @@
 # DR-0007: Selections per snapshot
 
-- **Status:** proposed
+- **Status:** accepted (confirmed by Josh, 2026-11-08, at Stop Point A)
 - **Date:** 2026-11-08
 - **Source:** Handoff Section 2, default D7
 - **Stage:** R1

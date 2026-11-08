@@ -1,6 +1,6 @@
 # DR-0012: Registry and snapshot storage
 
-- **Status:** proposed
+- **Status:** accepted (confirmed by Josh, 2026-11-08, at Stop Point A)
 - **Date:** 2026-11-08
 - **Source:** Handoff Section 2, default D12
 - **Stage:** R1 (R1.1), R0 (R0.4)

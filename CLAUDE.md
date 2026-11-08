@@ -30,5 +30,5 @@ If the brief and the spec disagree, **stop and ask Josh**. Don't resolve it your
 
 ## Status
 
-- Current stage: **R0.1 complete (all checks measured); waiting at Stop Point A for Josh's confirmation.** See `docs/memos/R0.1-data-verification.md`.
-- DR-0001 to DR-0014 are **proposed**. Josh's 2026-11-08 answers are recorded in them; DR confirmation is pending. DR-0013 covers ThetaData Stock Standard and DR-0014 covers Polygon for dividends and corporate actions.
+- Current stage: **Stop Point A closed (2026-11-08). Next is R0.2 (core types); don't start it until Josh gives the go-ahead.** See `docs/memos/R0.1-data-verification.md`.
+- DR-0001 to DR-0015 are **accepted** (2026-11-08). Change them only through new, linked DRs.
