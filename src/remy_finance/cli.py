@@ -92,8 +92,7 @@ def version() -> None:
 def snapshot_build(
     date_: Annotated[str, typer.Option("--date", help="Session date YYYY-MM-DD")],
     session: SessionOpt,
-    symbols: SymbolsOpt,
-    universe_version: Annotated[str, typer.Option()] = "MANUAL",
+    symbols: SymbolsOpt = "",
     no_events: Annotated[
         bool, typer.Option(help="Skip Polygon (dividends/CAs become gap notes)")
     ] = False,
@@ -141,8 +140,7 @@ def snapshot_build(
 @snapshot_app.command("take")
 def snapshot_take(
     session: SessionOpt,
-    symbols: SymbolsOpt,
-    universe_version: Annotated[str, typer.Option()] = "MANUAL",
+    symbols: SymbolsOpt = "",
     no_events: Annotated[
         bool, typer.Option(help="Skip Polygon (dividends/CAs become gap notes)")
     ] = False,
