@@ -100,6 +100,19 @@ Codex reviewed commit `aeda0c2` against `docs/review/R0-review-brief.md` and fou
 - **New decision records:** DR-0024 (slot finality, amending DR-0022) and DR-0025 (exact Decimal arithmetic), **both accepted by Josh on 2026-11-08**.
 - **Gate after the fixes:** 289 tests pass; ruff, format and mypy are clean.
 
+## End-to-end test and CI (2026-11-08)
+- **Fixture-week integration test** (`tests/integration/test_fixture_week.py`, brief §7): one underlying over a Monday–Friday week ending on its expiration, offline, through the real code. It:
+  - builds and stores 20 replay boards (decision plus execution for each session);
+  - runs the move generator;
+  - opens two positions, a debit spread and a credit spread, through a labelled placeholder for R1's selection step;
+  - fills them under FILL-1 on the 10:05 board;
+  - runs ASSIGN-1 at every later snapshot. The short 90 call is assumed assigned at Wednesday's open, the day before the ex-date, and force-closed at Wednesday's close, so no dividend is owed;
+  - settles the debit spread under EXP-1 at Friday's close.
+
+  Both positions reconcile to the cent. Two runs are byte-identical, and every stored board verifies and holds nothing stamped after its `as_of`.
+- **CI:** GitHub Actions (`.github/workflows/ci.yml`) runs the offline gate (ruff, format, mypy, pytest) on every push and pull request, with no secrets. Its first run passed.
+- **Gate:** 307 tests pass.
+
 ## Remaining before Stop Point B closes (on the Mac mini)
 ```bash
 cd ~/remy-finance && git pull && uv sync
