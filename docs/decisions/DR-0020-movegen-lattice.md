@@ -1,6 +1,6 @@
 # DR-0020: Move-generator strike lattice and enumeration details
 
-- **Status:** proposed (**needs Josh's ruling at Stop Point B**; it narrows the candidate set relative to DR-0008)
+- **Status:** accepted (confirmed by Josh, 2026-11-08, at Stop Point B)
 - **Date:** 2026-11-08
 - **Source:** Handoff §5 R0.7; refines DR-0008 (accepted) and DR-0006 (accepted)
 - **Stage:** R0

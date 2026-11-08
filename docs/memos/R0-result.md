@@ -54,18 +54,8 @@
 - **Prospective job timing:** a prospective board must be taken within 10 minutes of its scheduled time, or the slot becomes a gap (DR-0022).
 - **Splits:** they're only known on their execution date (DR-0021). Adjusted roots are still excluded by the OSI rule.
 
-## Decision records awaiting confirmation
-DR-0016 to DR-0023, all proposed:
-- DR-0016 canonical serialization
-- DR-0017 time model
-- DR-0018 payoff conventions
-- DR-0019 ASSIGN-1 details
-- **DR-0020 strike lattice (needs a ruling)**
-- DR-0021 data layer
-- DR-0022 snapshot store
-- DR-0023 UNIV-1 details
-
-DR-0001 to DR-0015 were accepted at Stop Point A.
+## Decision records
+**DR-0016 to DR-0023 were accepted by Josh on 2026-11-08**, including DR-0020's strike lattice as proposed. All 23 decision records are now accepted.
 
 ## Remaining before Stop Point B closes (on the Mac mini)
 ```bash
@@ -79,7 +69,5 @@ uv run remy snapshot take --session open --with-execution --movegen      # live 
 uv run remy snapshot verify
 ```
 
-## Questions for Josh
-1. **DR-0020:** should the strike lattice be accepted as proposed, or would you prefer a finer step for long options and verticals (more candidates, more run time)?
-2. **DR-0016 to DR-0023:** confirm them, or name any to change.
-3. **After the live runs:** do the results (Polygon declaration-date coverage, close agreement, real snapshot sizes and move-generator timing) satisfy you before R1 starts?
+## Remaining question for Josh
+After the live runs, do the results satisfy you before R1 starts? That covers Polygon declaration-date coverage, close agreement, and the real snapshot sizes and move-generator timing.

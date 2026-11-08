@@ -1,6 +1,6 @@
 # DR-0021: Data-layer semantics (`PointInTimeView`, adapters)
 
-- **Status:** proposed
+- **Status:** accepted (confirmed by Josh, 2026-11-08, at Stop Point B)
 - **Date:** 2026-11-08
 - **Source:** Handoff §5 R0.3; DR-0011, DR-0013, DR-0014, DR-0017
 - **Stage:** R0

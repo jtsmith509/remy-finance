@@ -1,6 +1,6 @@
 # DR-0017: Observation time model and the board's look-ahead invariant
 
-- **Status:** proposed
+- **Status:** accepted (confirmed by Josh, 2026-11-08, at Stop Point B)
 - **Date:** 2026-11-08
 - **Source:** Handoff §4 (four timestamps), §0 rule 4 (no look-ahead), R0.3 (`PointInTimeView` checks `public_time`, or `quote_time` for quotes); task R0.2
 - **Stage:** R0

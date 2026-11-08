@@ -1,6 +1,6 @@
 # DR-0016: Canonical serialization and content hashing (`CANON-1`)
 
-- **Status:** proposed
+- **Status:** accepted (confirmed by Josh, 2026-11-08, at Stop Point B)
 - **Date:** 2026-11-08
 - **Source:** Handoff §4 ("canonical JSON (sorted keys, fixed decimal handling) … SHA-256 content hash"), task R0.2
 - **Stage:** R0

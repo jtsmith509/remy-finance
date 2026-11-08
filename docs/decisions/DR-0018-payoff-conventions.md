@@ -1,6 +1,6 @@
 # DR-0018: Payoff and capital-at-risk conventions; priced structures
 
-- **Status:** proposed
+- **Status:** accepted (confirmed by Josh, 2026-11-08, at Stop Point B)
 - **Date:** 2026-11-08
 - **Source:** Handoff §5 R0.6; §4 (`Structure`, `Candidate`)
 - **Stage:** R0

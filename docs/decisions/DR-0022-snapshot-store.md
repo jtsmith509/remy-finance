@@ -1,6 +1,6 @@
 # DR-0022: Snapshot store rules (`SNAPSTORE-1`)
 
-- **Status:** proposed
+- **Status:** accepted (confirmed by Josh, 2026-11-08, at Stop Point B)
 - **Date:** 2026-11-08
 - **Source:** Handoff §5 R0.4; DR-0002, DR-0003, DR-0012, DR-0015
 - **Stage:** R0

@@ -1,6 +1,6 @@
 # DR-0023: UNIV-1 implementation details and the option-volume read path
 
-- **Status:** proposed
+- **Status:** accepted (confirmed by Josh, 2026-11-08, at Stop Point B)
 - **Date:** 2026-11-08
 - **Source:** Handoff §5 R0.5; refines DR-0004 (accepted)
 - **Stage:** R0

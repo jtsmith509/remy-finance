@@ -1,6 +1,6 @@
 # DR-0019: ASSIGN-1 implementation details
 
-- **Status:** proposed
+- **Status:** accepted (confirmed by Josh, 2026-11-08, at Stop Point B)
 - **Date:** 2026-11-08
 - **Source:** Handoff §5 R0.9; refines DR-0009 (accepted)
 - **Stage:** R0
