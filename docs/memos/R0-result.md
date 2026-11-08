@@ -104,7 +104,7 @@ Codex reviewed commit `aeda0c2` against `docs/review/R0-review-brief.md` and fou
 ```bash
 cd ~/remy-finance && git pull && uv sync
 # MASSIVE_API_KEY loaded from the macOS keychain (see the R0.1 memo)
-uv run python scripts/verify_massive.py                         # Massive M1-M6 incl. EXP-1 close spot-check (replaces verify_polygon.py)
+uv run python scripts/verify_massive.py                         # DONE 2026-11-08: M6 closes 33/33 (DR-0010 spot-check); see R0.1 memo
 uv run remy universe build --month 2026-11                      # DONE 2026-11-08 (see above)
 uv run remy snapshot build --date 2026-11-06 --session open --movegen     # DONE with --no-events (see above); redo with events after Polygon
 # On a trading day, between 10:00 and 10:10 ET:
