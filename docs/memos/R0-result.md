@@ -1,0 +1,85 @@
+# R0 result: data and correctness (Stop Point B, pending live runs)
+
+- **Stage:** R0 (handoff §5)
+- **Date:** 2026-11-08
+- **Branch:** `claude/cool-pascal-80kptn`
+
+> **Status:** all R0 code is written and the offline gate is green. Three items in the R0 definition of done are **live runs on the Mac mini** that this build environment can't perform: a replay snapshot, a live prospective snapshot, and Polygon verification. The commands are listed under *Remaining before Stop Point B closes*. This memo will be updated with their results.
+
+## What was built
+
+| Task | Module | Summary |
+|---|---|---|
+| R0.1 | `scripts/verify_thetadata.py` | Data verification; closed at Stop Point A ([memo](R0.1-data-verification.md)). |
+| R0.2 | `core/` | Frozen, Decimal-only records with canonical JSON and SHA-256 hashes (DR-0016). `MarketState` refuses any observation that becomes available after `as_of` (DR-0017). |
+| R0.3 | `data/` | `MarketDataSource` protocol; `PointInTimeView`, the only model-side read path, which raises `LookaheadError`; `FixtureSource` (offline); `ThetaDataSource` (R0.1-verified endpoints); `PolygonSource` (dividends and splits, DR-0014); `CompositeSource` (DR-0021). |
+| R0.4 | `snapshots/` | Snapshot schedule (DST- and half-day-aware), replay and prospective builders, QAGE-1 flags, and a write-once, content-addressed Parquet + manifest store, verified on load. Gap records block backfill. CLI `remy snapshot build\|take\|verify` (DR-0022). |
+| R0.5 | `universe/` | UNIV-1 monthly selection from the 80-name `UNIV-CANDIDATES-1`, by 20-session option volume read through the view. Write-once decisions with an inputs hash. CLI `remy universe build`. New `OptionVolume` read path (DR-0023). |
+| R0.6 | `core/payoff.py`, `core/structure.py`, `core/fees.py` | Piecewise-linear payoff; max loss and gain; capital at risk; FEES-1. A `Structure` recomputes its own risk numbers, so an undefined-risk or inconsistent structure can't be built (DR-0018). |
+| R0.7 | `movegen/` | MOVEGEN-1 enumeration (longs, verticals, condors, butterflies, null move) on a strike lattice (DR-0020); UNPRICEABLE candidates kept with reasons; SIZE-1 sizing; deterministic order and list hash. |
+| R0.8 | `execution/fill.py` | FILL-1 cost model: cross the spread, full displayed size per leg, all-or-none, fees only on a fill; stock closes for assignments. |
+| R0.9 | `execution/assignment.py` | ASSIGN-1: dividend rule, then the strict \$0.05 threshold; extrinsic from the bid; position and cash consequences (DR-0019). |
+| R0.10 | `execution/settlement.py` | EXP-1: exercise-by-exception at ≥ \$0.01 in the money, settlement at intrinsic, PIN_RISK_APPROXIMATE within \$0.25. |
+
+## Test results (offline, no network)
+
+`ruff check`, `ruff format --check` and `mypy` (strict on `core` and `registry`) are all clean. **pytest: 247 passed.**
+
+| Area | Tests | Highlights |
+|---|---|---|
+| `core` | 132 | Round trip for every record type; a pinned golden hash; immutability; Decimal-only fields (including a check that no record declares a float); OSI validation; every R0.6 handoff fixture **exactly**, including rejection of the naked short call. |
+| `execution` | 34 | Every R0.9 fixture; R1.2 fill fixtures (5 vs ask size 3; condor with one short leg; execution quote used); EXP-1 thresholds and pin window. |
+| `movegen` | 17 | Hand-computed counts per structure type (138 on the test board); bounds; unpriceable kept; sizing; byte-identical output and hash when input order changes. |
+| `data` | 24 | Adapters against mocked HTTP. **The dedicated look-ahead module** requests future data through every public read path and asserts `LookaheadError`; a meta-test fails if a read path is added without a test. |
+| `snapshots` | 14 | DST and half-day times; flags; gap notes; look-ahead propagation; store round trip with an identical ID; write-once; tamper detection; execution linkage; the gap/backfill rule. |
+| `universe` | 6 | Only prior-session data is used (future data changes nothing); names that later delist are kept; a leaky source raises; deterministic; write-once. |
+| property (hypothesis) | 11 | P&L ≥ −capital at risk for random defined-risk structures, and that bound is attained; call and put butterflies identical; call/put verticals differ by a constant; canonical Decimal idempotence; hash order and timezone independence. Repeated under 5 seeds. |
+| scripts | 9 | Verification-script logic against a mocked Terminal. |
+
+**Defects found by the tests and fixed:**
+- `Decimal.normalize()` rounds to 28 digits, which would have changed canonical values (DR-0016).
+- The original staleness check compared clock time without the date (R0.1).
+- The Polygon pagination loop raised on an exact page limit.
+
+## Measured performance
+- **Move generator:** a synthetic SPY-sized board (22k quotes, 30 expirations) gives about 37.5k candidates in about 8 s. The 50-name estimate is roughly 300–350k candidates and about 70 s per snapshot.
+- **Hashing:** a 22k-quote board hashes in about 0.5 s.
+- Both will be re-measured on real boards in the live R0.4 run (`--movegen`).
+
+## Known limitations
+- **Live runs pending** (see below). The R0.3/R0.4/R0.5 adapters are tested only against mocked HTTP, so far.
+- **Survivorship bias** remains in the 2026-chosen candidate list (DR-0004/0023).
+- **Under-assignment near the money:** ASSIGN-1 uses the underlying mid. A leg in the money by less than half the underlying spread may be under-assigned (DR-0019).
+- **Strike lattice:** DR-0020's lattice skips strikes between grid points, so SPY uses \$10 steps.
+- **Prospective job timing:** a prospective board must be taken within 10 minutes of its scheduled time, or the slot becomes a gap (DR-0022).
+- **Splits:** they're only known on their execution date (DR-0021). Adjusted roots are still excluded by the OSI rule.
+
+## Decision records awaiting confirmation
+DR-0016 to DR-0023, all proposed:
+- DR-0016 canonical serialization
+- DR-0017 time model
+- DR-0018 payoff conventions
+- DR-0019 ASSIGN-1 details
+- **DR-0020 strike lattice (needs a ruling)**
+- DR-0021 data layer
+- DR-0022 snapshot store
+- DR-0023 UNIV-1 details
+
+DR-0001 to DR-0015 were accepted at Stop Point A.
+
+## Remaining before Stop Point B closes (on the Mac mini)
+```bash
+cd ~/remy-finance && git pull && uv sync
+export POLYGON_API_KEY=...   # or read it from the keychain
+uv run python scripts/verify_polygon.py                         # DR-0014 + EXP-1 close spot-check
+uv run remy universe build --month 2026-11                      # first UNIV-1 decision
+uv run remy snapshot build --date 2026-11-06 --session open --movegen     # replay snapshot
+# On a trading day, between 10:00 and 10:10 ET:
+uv run remy snapshot take --session open --with-execution --movegen      # live prospective snapshot
+uv run remy snapshot verify
+```
+
+## Questions for Josh
+1. **DR-0020:** should the strike lattice be accepted as proposed, or would you prefer a finer step for long options and verticals (more candidates, more run time)?
+2. **DR-0016 to DR-0023:** confirm them, or name any to change.
+3. **After the live runs:** do the results (Polygon declaration-date coverage, close agreement, real snapshot sizes and move-generator timing) satisfy you before R1 starts?
