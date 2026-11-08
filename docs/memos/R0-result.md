@@ -57,12 +57,21 @@
 ## Decision records
 **DR-0016 to DR-0023 were accepted by Josh on 2026-11-08**, including DR-0020's strike lattice as proposed. All 23 decision records are now accepted.
 
+## Live runs on the Mac mini
+
+**`remy universe build --month 2026-11`** (2026-11-08):
+- **Result:** `UNIV-1:2026-11-02` selected **50 members in 278 s** with 4 workers, from a window of 2026-10-05 to 2026-10-30. All 80 candidates had **20 of 20 sessions** of volume data, so no name was ineligible. Inputs hash `b00e32214305fdaf…`.
+- **Top of the ranking (average daily contracts):** SPY 12.13M, QQQ 8.49M, NVDA 2.66M, TSLA 2.09M, IWM 1.97M, AAPL 1.27M, MU 1.13M.
+- **Cut-off:** #50 FXI (58.7k) against #51 QCOM (57.4k). Also just outside: KO, JPM, WFC, DIA, PYPL, LLY.
+- **Members:** SPY, QQQ, NVDA, TSLA, IWM, AAPL, MU, INTC, AMZN, TLT, META, AMD, GOOGL, MSFT, HYG, PLTR, SOFI, NFLX, MSTR, ORCL, AVGO, GLD, HOOD, SLV, SMH, XLF, SMCI, BAC, XLE, WMT, TSM, COIN, GDX, BA, BABA, RIVN, EEM, XLU, UBER, T, XLP, VZ, PFE, UNH, KRE, F, ARM, C, XOM, FXI.
+- **Observation:** XLB, XLC, DE and MA trade only 3–9k contracts a day. That's a candidate-list revision to consider later (`UNIV-CANDIDATES-2`). It needs no action now.
+
 ## Remaining before Stop Point B closes (on the Mac mini)
 ```bash
 cd ~/remy-finance && git pull && uv sync
 export POLYGON_API_KEY=...   # or read it from the keychain
 uv run python scripts/verify_polygon.py                         # DR-0014 + EXP-1 close spot-check
-uv run remy universe build --month 2026-11                      # first UNIV-1 decision
+uv run remy universe build --month 2026-11                      # DONE 2026-11-08 (see above)
 uv run remy snapshot build --date 2026-11-06 --session open --movegen     # replay snapshot
 # On a trading day, between 10:00 and 10:10 ET:
 uv run remy snapshot take --session open --with-execution --movegen      # live prospective snapshot
