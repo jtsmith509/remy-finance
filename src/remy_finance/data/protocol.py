@@ -7,7 +7,7 @@ Models, movegen and baselines never call a source directly: they read through
 from __future__ import annotations
 
 from collections.abc import Sequence
-from datetime import datetime
+from datetime import date, datetime
 from typing import Protocol, runtime_checkable
 
 from remy_finance.core import (
@@ -15,6 +15,7 @@ from remy_finance.core import (
     DividendEvent,
     OptionContract,
     OptionQuote,
+    OptionVolume,
     RatePoint,
     UnderlyingQuote,
 )
@@ -42,3 +43,7 @@ class MarketDataSource(Protocol):
     ) -> Sequence[CorporateAction]: ...
 
     def rates(self, known_as_of: datetime) -> Sequence[RatePoint]: ...
+
+    def option_volume(self, underlying: str, session_date: date) -> OptionVolume | None:
+        """Total option volume for one completed session (UNIV-1 extension, DR-0023)."""
+        ...

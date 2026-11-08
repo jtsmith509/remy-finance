@@ -117,6 +117,17 @@ class RatePoint(_PublicObservation):
     rate: Dec
 
 
+class OptionVolume(_PublicObservation):
+    """Total option contracts traded for an underlying on one session (from an EOD report).
+
+    ``public_time`` is when the vendor's end-of-day report is available (ThetaData: 17:15 ET).
+    """
+
+    symbol: str = Field(min_length=1)
+    session_date: date
+    contracts: int = Field(ge=0)
+
+
 class Provenance(Record):
     """Where data in a snapshot came from (vendor, endpoint, terminal version, ...)."""
 

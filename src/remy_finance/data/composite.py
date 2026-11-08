@@ -4,7 +4,7 @@ from another (ThetaData + Polygon, DR-0013/DR-0014)."""
 from __future__ import annotations
 
 from collections.abc import Sequence
-from datetime import datetime
+from datetime import date, datetime
 from typing import Protocol
 
 from remy_finance.core import (
@@ -12,6 +12,7 @@ from remy_finance.core import (
     DividendEvent,
     OptionContract,
     OptionQuote,
+    OptionVolume,
     RatePoint,
     UnderlyingQuote,
 )
@@ -22,6 +23,7 @@ class _QuoteSource(Protocol):
     def chain_quotes_at(self, underlying: str, ts: datetime) -> Sequence[OptionQuote]: ...
     def underlying_quote_at(self, symbol: str, ts: datetime) -> UnderlyingQuote | None: ...
     def rates(self, known_as_of: datetime) -> Sequence[RatePoint]: ...
+    def option_volume(self, underlying: str, session_date: date) -> OptionVolume | None: ...
 
 
 class _EventSource(Protocol):
@@ -53,3 +55,6 @@ class CompositeSource:
 
     def rates(self, known_as_of: datetime) -> Sequence[RatePoint]:
         return self._q.rates(known_as_of)
+
+    def option_volume(self, underlying: str, session_date: date) -> OptionVolume | None:
+        return self._q.option_volume(underlying, session_date)

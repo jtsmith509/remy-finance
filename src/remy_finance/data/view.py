@@ -10,7 +10,7 @@ A source returning future data is a defect, so the view raises rather than filte
 from __future__ import annotations
 
 from collections.abc import Iterable
-from datetime import datetime
+from datetime import date, datetime
 from typing import TypeVar
 
 from remy_finance.core import (
@@ -19,13 +19,16 @@ from remy_finance.core import (
     LookaheadError,
     OptionContract,
     OptionQuote,
+    OptionVolume,
     RatePoint,
     UnderlyingQuote,
 )
 from remy_finance.data.protocol import MarketDataSource
-from remy_finance.data.timeutil import require_aware
+from remy_finance.data.timeutil import et_date, require_aware
 
-T = TypeVar("T", OptionQuote, UnderlyingQuote, DividendEvent, CorporateAction, RatePoint)
+T = TypeVar(
+    "T", OptionQuote, UnderlyingQuote, DividendEvent, CorporateAction, RatePoint, OptionVolume
+)
 
 
 class PointInTimeView:
@@ -86,3 +89,13 @@ class PointInTimeView:
 
     def rates(self) -> tuple[RatePoint, ...]:
         return self._check_items(self._source.rates(self._as_of), "rates")
+
+    def option_volume(self, underlying: str, session_date: date) -> OptionVolume | None:
+        """Volume for a completed session; asking for today's or a later session raises."""
+        if session_date >= et_date(self._as_of):
+            raise LookaheadError(
+                f"option_volume({underlying}, {session_date}) requested; "
+                f"as_of session is {et_date(self._as_of)}"
+            )
+        v = self._source.option_volume(underlying, session_date)
+        return None if v is None else self._check_items((v,), f"option_volume({underlying})")[0]

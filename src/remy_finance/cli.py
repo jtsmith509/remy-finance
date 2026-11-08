@@ -17,9 +17,14 @@ from remy_finance.core import Mode, Provenance, Session
 app = typer.Typer(help="REMY Finance command-line interface.", no_args_is_help=True)
 snapshot_app = typer.Typer(help="Market snapshots (R0.4).", no_args_is_help=True)
 app.add_typer(snapshot_app, name="snapshot")
+universe_app = typer.Typer(help="Point-in-time universe UNIV-1 (R0.5).", no_args_is_help=True)
+app.add_typer(universe_app, name="universe")
 
 SymbolsOpt = Annotated[
-    str, typer.Option(help="Comma-separated underlyings (until R0.5 supplies the universe).")
+    str,
+    typer.Option(
+        help="Comma-separated underlyings; default: the stored UNIV-1 membership in force."
+    ),
 ]
 SessionOpt = Annotated[str, typer.Option(help="open or close")]
 
@@ -28,11 +33,17 @@ def _data_dir() -> Path:
     return Path(os.environ.get("REMY_DATA_DIR", "data"))
 
 
-def _symbols(text: str) -> list[str]:
+def _symbols(text: str, session_date: date) -> tuple[list[str], str]:
+    """Explicit symbols (universe version MANUAL), else the UNIV-1 membership in force."""
     syms = sorted({s.strip().upper() for s in text.split(",") if s.strip()})
-    if not syms:
-        raise typer.BadParameter("no symbols given")
-    return syms
+    if syms:
+        return syms, "MANUAL"
+    from remy_finance.universe.selection import UniverseStore
+
+    decision = UniverseStore(_data_dir() / "universe").membership_for(session_date)
+    if decision is None:
+        raise typer.BadParameter(f"no --symbols and no stored universe in force on {session_date}")
+    return list(decision.members), decision.version_label
 
 
 def _session(text: str) -> Session:
@@ -95,7 +106,8 @@ def snapshot_build(
     from remy_finance.snapshots.schedule import SnapshotKind
     from remy_finance.snapshots.store import SnapshotStore
 
-    d, sess, syms = date.fromisoformat(date_), _session(session), _symbols(symbols)
+    d, sess = date.fromisoformat(date_), _session(session)
+    syms, universe_version = _symbols(symbols, d)
     _, source = _sources(no_events)
     store = SnapshotStore(_data_dir() / "snapshots")
     prov = (Provenance(source="cli", details=(("command", "snapshot build"),)),)
@@ -142,12 +154,15 @@ def snapshot_take(
     ] = False,
 ) -> None:
     """Take and store a live PROSPECTIVE snapshot (run at the scheduled time)."""
+    from datetime import UTC
+
     from remy_finance.data.timeutil import et_date
     from remy_finance.snapshots.builder import build_prospective
     from remy_finance.snapshots.schedule import SnapshotKind, snapshot_time
     from remy_finance.snapshots.store import SnapshotStore
 
-    sess, syms = _session(session), _symbols(symbols)
+    sess = _session(session)
+    syms, universe_version = _symbols(symbols, et_date(datetime.now(UTC)))
     theta, source = _sources(no_events)
     store = SnapshotStore(_data_dir() / "snapshots")
     prov = (Provenance(source="cli", details=(("command", "snapshot take"),)),)
@@ -159,8 +174,6 @@ def snapshot_take(
     )
     for kind in kinds:
         if kind is SnapshotKind.EXECUTION:
-            from datetime import UTC
-
             wait = (
                 snapshot_time(et_date(datetime.now(UTC)), sess, kind) - datetime.now(UTC)
             ).total_seconds()
@@ -188,6 +201,37 @@ def snapshot_take(
             decision_id = m.snapshot_id
             if movegen:
                 _report_movegen(state)
+
+
+@universe_app.command("build")
+def universe_build(
+    month: Annotated[str, typer.Option(help="YYYY-MM: selects on the month's first XNYS session")],
+) -> None:
+    """Select and store the UNIV-1 membership for a month (point-in-time, write-once)."""
+    from remy_finance.data.thetadata import ThetaDataSource
+    from remy_finance.universe.selection import (
+        UniverseStore,
+        first_session_of_month,
+        select_universe,
+    )
+
+    y, m = (int(x) for x in month.split("-"))
+    session = first_session_of_month(y, m)
+    t0 = time.perf_counter()
+    decision = select_universe(ThetaDataSource(), session)
+    path = UniverseStore(_data_dir() / "universe").write(decision)
+    typer.echo(
+        f"{decision.version_label}: {len(decision.members)} members, window "
+        f"{decision.window_start}..{decision.window_end}, inputs {decision.inputs_hash[:16]} "
+        f"({time.perf_counter() - t0:.0f}s) -> {path}"
+    )
+    for s in sorted(decision.scores, key=lambda s: (s.rank is None, s.rank or 0, s.symbol)):
+        avg = "-" if s.average_contracts is None else f"{s.average_contracts:,.0f}"
+        mark = "*" if s.symbol in decision.members else " "
+        typer.echo(
+            f" {mark} {s.rank or '-':>3} {s.symbol:<6} avg {avg:>12}  "
+            f"days {s.sessions_with_data} {s.reason}"
+        )
 
 
 @snapshot_app.command("verify")

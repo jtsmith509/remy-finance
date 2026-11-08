@@ -25,6 +25,7 @@ from remy_finance.core import (
     DividendEvent,
     OptionContract,
     OptionQuote,
+    OptionVolume,
     QualityFlag,
     RatePoint,
     Right,
@@ -227,6 +228,28 @@ class ThetaDataSource:
                     )
                 )
         return tuple(out)
+
+    def option_volume(self, underlying: str, session_date: date) -> OptionVolume | None:
+        """Sum of contract volume across the chain from the session's EOD report (17:15 ET)."""
+        rows = self._get(
+            "/v3/option/history/eod",
+            symbol=underlying,
+            expiration="*",
+            start_date=_ymd(session_date),
+            end_date=_ymd(session_date),
+        )
+        if not rows:
+            return None
+        published = et_at(session_date, 17, 15)
+        return OptionVolume(
+            symbol=underlying,
+            session_date=session_date,
+            contracts=sum(int(r.get("volume") or 0) for r in rows),
+            event_time=published,
+            public_time=published,
+            ingest_time=self._clock(),
+            source="thetadata:option/history/eod",
+        )
 
     # ------------------------------------------------- live (prospective) only
 

@@ -11,7 +11,7 @@ from __future__ import annotations
 import json
 from collections import defaultdict
 from collections.abc import Iterable, Sequence
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 
 from remy_finance.core import (
@@ -19,6 +19,7 @@ from remy_finance.core import (
     DividendEvent,
     OptionContract,
     OptionQuote,
+    OptionVolume,
     RatePoint,
     Record,
     UnderlyingQuote,
@@ -47,6 +48,7 @@ class FixtureSource:
         self._div: list[DividendEvent] = []
         self._ca: list[CorporateAction] = []
         self._rates: list[RatePoint] = []
+        self._volume: dict[tuple[str, date], OptionVolume] = {}
         for r in records:
             self.add(r)
 
@@ -65,6 +67,8 @@ class FixtureSource:
             self._ca.append(record)
         elif isinstance(record, RatePoint):
             self._rates.append(record)
+        elif isinstance(record, OptionVolume):
+            self._volume[(record.symbol, record.session_date)] = record
         else:
             raise TypeError(f"FixtureSource cannot store {type(record).__name__}")
 
@@ -81,6 +85,7 @@ class FixtureSource:
         out.extend(self._div)
         out.extend(self._ca)
         out.extend(self._rates)
+        out.extend(self._volume.values())
         return sorted(out, key=lambda r: r.canonical_json())
 
     def dump(self, path: Path) -> None:
@@ -137,3 +142,6 @@ class FixtureSource:
 
     def rates(self, known_as_of: datetime) -> Sequence[RatePoint]:
         return tuple(r for r in self._rates if r.public_time <= known_as_of)
+
+    def option_volume(self, underlying: str, session_date: date) -> OptionVolume | None:
+        return self._volume.get((underlying, session_date))

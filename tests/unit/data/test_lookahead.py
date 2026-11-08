@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import inspect
 from collections.abc import Callable, Sequence
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from typing import Any
 
 import httpx
@@ -23,6 +23,7 @@ from remy_finance.core import (
     LookaheadError,
     OptionContract,
     OptionQuote,
+    OptionVolume,
     RatePoint,
     UnderlyingQuote,
 )
@@ -67,6 +68,17 @@ class LeakySource:
         r = f.rate()
         return (r.model_copy(update={"public_time": known_as_of + timedelta(microseconds=1)}),)
 
+    def option_volume(self, underlying: str, session_date: date) -> OptionVolume | None:
+        t = AS_OF + timedelta(microseconds=1)  # published "after" as_of: a defect
+        return OptionVolume(
+            symbol=underlying,
+            session_date=session_date,
+            contracts=1,
+            event_time=t,
+            public_time=t,
+            source="leaky",
+        )
+
 
 READS: dict[str, Callable[[PointInTimeView], Any]] = {
     "chain_quotes": lambda v: v.chain_quotes("XYZ"),
@@ -74,10 +86,12 @@ READS: dict[str, Callable[[PointInTimeView], Any]] = {
     "dividends": lambda v: v.dividends("XYZ"),
     "corporate_actions": lambda v: v.corporate_actions("XYZ"),
     "rates": lambda v: v.rates(),
+    "option_volume": lambda v: v.option_volume("XYZ", date(2026, 11, 5)),
 }
 FUTURE_REQUESTS: dict[str, Callable[[PointInTimeView], Any]] = {
     "chain_quotes": lambda v: v.chain_quotes("XYZ", LATER),
     "underlying_quote": lambda v: v.underlying_quote("XYZ", LATER),
+    "option_volume": lambda v: v.option_volume("XYZ", date(2026, 11, 6)),  # today: not complete
 }
 NO_TIME_ARGUMENT = {"list_contracts", "as_of"}  # cannot be asked for a later time
 
