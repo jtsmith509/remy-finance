@@ -30,5 +30,5 @@ If the brief and the spec disagree, **stop and ask Josh**. Don't resolve it your
 
 ## Status
 
-- Current stage: **Stop Point A closed (2026-11-08). Next is R0.2 (core types); don't start it until Josh gives the go-ahead.** See `docs/memos/R0.1-data-verification.md`.
-- DR-0001 to DR-0015 are **accepted** (2026-11-08). Change them only through new, linked DRs.
+- Current stage: **R0 in progress.** Stop Point A closed 2026-11-08. R0.2 (core types) is done. The next stop is **Stop Point B** at the end of R0. See `docs/memos/R0.1-data-verification.md`.
+- DR-0001 to DR-0015 are **accepted** (2026-11-08). Change them only through new, linked DRs. DR-0016 and DR-0017 (from R0.2) are **proposed**, for review at Stop Point B.

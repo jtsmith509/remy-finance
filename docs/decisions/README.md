@@ -17,5 +17,7 @@
 | [DR-0013](DR-0013-underlying-quote-source.md) | Underlying quote source (Stock Standard) | R0.1 | accepted |
 | [DR-0014](DR-0014-dividends-corporate-actions.md) | Dividend and corporate-action source (Polygon) | R0.1 | accepted |
 | [DR-0015](DR-0015-quote-age.md) | Quote age handling QAGE-1 | R0.1 | accepted |
+| [DR-0016](DR-0016-canonical-serialization.md) | Canonical serialization and hashing CANON-1 | R0.2 | proposed |
+| [DR-0017](DR-0017-time-model.md) | Time model and the board's look-ahead invariant | R0.2 | proposed |
 
 Each record has these sections: context, options considered, decision, consequences. Status stays *proposed* until Josh confirms it. A confirmed DR is superseded only by a new, linked DR; it is never edited in place.
