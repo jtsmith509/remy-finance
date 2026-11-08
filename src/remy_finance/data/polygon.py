@@ -137,7 +137,19 @@ class PolygonSource:
         return tuple(d for d in self._load_dividends(symbol) if d.public_time <= known_as_of)
 
     def corporate_actions(self, symbol: str, known_as_of: datetime) -> Sequence[CorporateAction]:
+        """Splits, plus special cash dividends as SPECIAL_DIVIDEND actions.
+
+        The two feeds are independent: if the dividend feed fails, the splits are still
+        returned (the dividend failure itself surfaces through ``dividends()``, which the
+        snapshot builder records as a ``DIVIDENDS:`` note) and the gap is logged in
+        ``skipped``. A splits failure raises.
+        """
         splits = [a for a in self._load_splits(symbol) if a.public_time <= known_as_of]
+        try:
+            divs = self.dividends(symbol, known_as_of)
+        except PolygonError as e:
+            self.skipped.append(f"{symbol}: special dividends unavailable ({e})")
+            return tuple(splits)
         specials = [
             CorporateAction(
                 symbol=symbol,
@@ -149,7 +161,7 @@ class PolygonSource:
                 ingest_time=d.ingest_time,
                 source=d.source,
             )
-            for d in self.dividends(symbol, known_as_of)
+            for d in divs
             if d.dividend_type is DividendType.SPECIAL
         ]
         return tuple(splits + specials)

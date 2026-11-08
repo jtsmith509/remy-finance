@@ -14,6 +14,7 @@ from collections.abc import Callable, Sequence
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
+from functools import partial
 from typing import Protocol
 
 from pydantic import Field
@@ -28,6 +29,7 @@ from remy_finance.core import (
     Provenance,
     QualityFlag,
     QualityNote,
+    RatePoint,
     Record,
     Session,
     UnderlyingQuote,
@@ -159,12 +161,39 @@ def build_from_view(
                 f.cancel()
             raise
 
+    return _assemble(
+        results,
+        view,
+        as_of=as_of,
+        session=session,
+        mode=mode,
+        universe_version=universe_version,
+        underlyings=underlyings,
+        provenance=provenance,
+        rule=rule,
+    )
+
+
+def _assemble(
+    results: dict[str, _SymbolData],
+    view: PointInTimeView,
+    *,
+    as_of: datetime,
+    session: Session,
+    mode: Mode,
+    universe_version: str,
+    underlyings: Sequence[str],
+    provenance: Sequence[Provenance],
+    rule: QuoteAgeRule,
+    extra_notes: Sequence[QualityNote] = (),
+) -> MarketState:
+    """Shared by the replay and prospective builders: one set of per-read rules."""
     options: list[OptionQuote] = []
     unders: list[UnderlyingQuote] = []
     divs: list[DividendEvent] = []
     acts: list[CorporateAction] = []
-    notes: list[QualityNote] = []
-    for sym in symbols:  # fixed order: the board is independent of completion order
+    notes: list[QualityNote] = list(extra_notes)
+    for sym in sorted(results):  # fixed order: the board is independent of completion order
         out = results[sym]
         notes.extend(out.errors)
         failed = {n.code.split(":")[0] for n in out.errors}
@@ -177,13 +206,10 @@ def build_from_view(
         elif "UNDERLYING_QUOTE" not in failed:
             notes.append(QualityNote(scope=sym, code="NO_UNDERLYING_QUOTE"))
         options.extend(flag_option_quote(q, as_of, rule) for q in out.chain)
-    try:
-        rates = list(view.rates())
-    except LookaheadError:
-        raise
-    except Exception as e:
-        rates = []
-        notes.append(_note("*", e))
+    rate_errors: list[QualityNote] = []
+    empty_r: tuple[RatePoint, ...] = ()
+    rates = _read("*", "RATES", view.rates, empty_r, rate_errors)
+    notes.extend(rate_errors)
     return MarketState(
         session=session,
         as_of=as_of,
@@ -245,59 +271,49 @@ def build_prospective(
     rule: QuoteAgeRule = QAGE_1,
 ) -> MarketState:
     """Fetch live quotes, then stamp ``as_of`` *after* the fetch so nothing post-dates it.
-    Dividends, corporate actions and rates are read through the view at that ``as_of``."""
+    Dividends, corporate actions and rates are read through the view at that ``as_of``.
+
+    Every read is guarded on its own (a failure becomes a note naming the read and the
+    other reads are kept); a ``LookaheadError`` from any read always aborts (DR-0022)."""
+    symbols = sorted(set(underlyings))
+    live_errors: dict[str, list[QualityNote]] = {sym: [] for sym in symbols}
+    empty_q: tuple[OptionQuote, ...] = ()
     chains: dict[str, tuple[OptionQuote, ...]] = {}
     uqs: dict[str, UnderlyingQuote | None] = {}
-    notes: list[QualityNote] = []
-    for sym in sorted(set(underlyings)):
-        try:
-            chains[sym] = live.live_chain_quotes(sym)
-            uqs[sym] = live.live_underlying_quote(sym)
-        except Exception as e:
-            notes.append(_note(sym, e))
+    for sym in symbols:
+        errs = live_errors[sym]
+        chains[sym] = _read(
+            sym, "OPTION_QUOTES", partial(live.live_chain_quotes, sym), empty_q, errs
+        )
+        uqs[sym] = _read(
+            sym, "UNDERLYING_QUOTE", partial(live.live_underlying_quote, sym), None, errs
+        )
     as_of = clock()
     view = PointInTimeView(events, as_of)
-    options: list[OptionQuote] = []
-    unders: list[UnderlyingQuote] = []
-    divs: list[DividendEvent] = []
-    acts: list[CorporateAction] = []
-    for sym in sorted(chains):
-        try:
-            divs.extend(view.dividends(sym))
-            acts.extend(view.corporate_actions(sym))
-        except LookaheadError:
-            raise
-        except Exception as e:
-            notes.append(_note(sym, e))
-        if not chains[sym]:
-            notes.append(QualityNote(scope=sym, code="NO_OPTION_QUOTES"))
-        options.extend(flag_option_quote(q, as_of, rule) for q in chains[sym])
-        uq = uqs.get(sym)
-        if uq is None:
-            notes.append(QualityNote(scope=sym, code="NO_UNDERLYING_QUOTE"))
-        else:
-            unders.append(flag_underlying_quote(uq, as_of, rule))
-    try:
-        rates = list(view.rates())
-    except LookaheadError:
-        raise
-    except Exception as e:
-        rates = []
-        notes.append(_note("*", e))
-    return MarketState(
-        session=session,
+    empty_d: tuple[DividendEvent, ...] = ()
+    empty_a: tuple[CorporateAction, ...] = ()
+    results: dict[str, _SymbolData] = {}
+    for sym in symbols:
+        errs = live_errors[sym]
+        dividends = _read(sym, "DIVIDENDS", partial(view.dividends, sym), empty_d, errs)
+        actions = _read(
+            sym, "CORPORATE_ACTIONS", partial(view.corporate_actions, sym), empty_a, errs
+        )
+        results[sym] = _SymbolData(
+            chain=tuple(chains[sym]),
+            underlying=uqs[sym],
+            dividends=tuple(dividends),
+            actions=tuple(actions),
+            errors=tuple(errs),
+        )
+    return _assemble(
+        results,
+        view,
         as_of=as_of,
+        session=session,
         mode=Mode.PROSPECTIVE,
         universe_version=universe_version,
-        underlyings=tuple(sorted(set(underlyings))),
-        underlying_quotes=tuple(unders),
-        option_quotes=tuple(options),
-        dividends=tuple(divs),
-        corporate_actions=tuple(acts),
-        rates=tuple(rates),
-        provenance=(
-            *provenance,
-            Provenance(source="builder", details=(("quote_age_rule", rule.version),)),
-        ),
-        quality_notes=tuple(notes),
+        underlyings=underlyings,
+        provenance=provenance,
+        rule=rule,
     )
