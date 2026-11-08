@@ -122,6 +122,13 @@ def _actions_handler(req: httpx.Request) -> httpx.Response:
                 "split_to": 1,
                 "adjustment_type": "reverse_split",
             },
+            # NVDA's July 2021 4-for-1 split, labelled a stock dividend by Massive (live run, M2)
+            {
+                "execution_date": "2021-07-20",
+                "split_from": 1,
+                "split_to": 4,
+                "adjustment_type": "stock_dividend",
+            },
             {
                 "execution_date": "2025-03-03",
                 "split_from": 1,
@@ -132,8 +139,11 @@ def _actions_handler(req: httpx.Request) -> httpx.Response:
         return httpx.Response(200, json={"results": rows})
     if req.url.path == "/vX/reference/tickers/XYZ/events":
         assert req.url.params["types"] == "ticker_change"
-        ev = {"date": "2026-02-02", "type": "ticker_change", "ticker_change": {"ticker": "XYZ"}}
-        return httpx.Response(200, json={"results": {"events": [ev], "name": "XYZ Corp"}})
+        events = [  # shape seen live for META: initial ticker in 2012, rename in 2022
+            {"date": "2022-06-09", "type": "ticker_change", "ticker_change": {"ticker": "XYZ"}},
+            {"date": "2012-05-18", "type": "ticker_change", "ticker_change": {"ticker": "OLD"}},
+        ]
+        return httpx.Response(200, json={"results": {"events": events, "name": "XYZ Corp"}})
     row = {
         "cash_amount": 2.5,
         "declaration_date": "2026-05-01",
@@ -146,16 +156,81 @@ def _actions_handler(req: httpx.Request) -> httpx.Response:
 def test_splits_ticker_events_and_specials() -> None:
     acts = src(_actions_handler).corporate_actions("XYZ", TS)
     kinds = sorted(a.action_type.value for a in acts)
-    assert kinds == ["OTHER", "REVERSE_SPLIT", "SPECIAL_DIVIDEND", "SPLIT", "SYMBOL_CHANGE"]
-    split = next(a for a in acts if a.action_type is CorporateActionType.SPLIT)
+    assert kinds == [
+        "OTHER",
+        "REVERSE_SPLIT",
+        "SPECIAL_DIVIDEND",
+        "SPLIT",
+        "SPLIT",
+        "SYMBOL_CHANGE",
+    ]
+    split = next(a for a in acts if a.effective_date == date(2026, 6, 10))
     assert split.public_time == datetime(2026, 6, 10, 13, 30, tzinfo=UTC)  # 09:30 EDT on execution
     assert dict(split.details) == {
         "adjustment_type": "forward_split",
         "split_from": "1",
         "split_to": "4",
     }
-    change = next(a for a in acts if a.action_type is CorporateActionType.SYMBOL_CHANGE)
-    assert dict(change.details) == {"ticker": "XYZ"} and change.effective_date == date(2026, 2, 2)
+    big_stock_div = next(a for a in acts if a.effective_date == date(2021, 7, 20))
+    assert big_stock_div.action_type is CorporateActionType.SPLIT  # >= 25%: a split for options
+    small = next(a for a in acts if a.effective_date == date(2025, 3, 3))
+    assert small.action_type is CorporateActionType.OTHER
+    (change,) = [a for a in acts if a.action_type is CorporateActionType.SYMBOL_CHANGE]
+    assert dict(change.details) == {"from_ticker": "OLD", "to_ticker": "XYZ"}
+    assert change.effective_date == date(2022, 6, 9)
+
+
+def test_initial_ticker_event_is_not_a_change() -> None:
+    """Live run: every symbol had one 2003-09-10 event naming its own ticker (start of records)."""
+
+    def h(req: httpx.Request) -> httpx.Response:
+        if "events" in req.url.path:
+            ev = {"date": "2003-09-10", "type": "ticker_change", "ticker_change": {"ticker": "KO"}}
+            return httpx.Response(200, json={"results": {"events": [ev]}})
+        return httpx.Response(200, json={"results": []})
+
+    acts = src(h).corporate_actions("KO", TS)
+    assert not any(a.action_type is CorporateActionType.SYMBOL_CHANGE for a in acts)
+
+
+def test_schedule_declared_dividends_are_public_only_on_ex_date() -> None:
+    """Live run: SPY's 2026 distributions all carry declaration 2026-01-02 with exact amounts.
+    The amount cannot be known in January, so those become public on the ex-date (DR-0027)."""
+
+    def h(req: httpx.Request) -> httpx.Response:
+        rows = [
+            {
+                "cash_amount": 1.796999,
+                "declaration_date": "2026-01-02",
+                "ex_dividend_date": "2026-03-20",
+                "distribution_type": "recurring",
+            },
+            {
+                "cash_amount": 1.903516,
+                "declaration_date": "2026-01-02",
+                "ex_dividend_date": "2026-06-18",
+                "distribution_type": "recurring",
+            },
+            {
+                "cash_amount": 0.53,
+                "declaration_date": "2026-07-15",
+                "ex_dividend_date": "2026-09-15",
+                "distribution_type": "recurring",
+            },  # an ordinary one-to-one declaration (KO-like)
+        ]
+        return httpx.Response(200, json={"results": rows})
+
+    s = src(h)
+    may = datetime(2026, 5, 1, 14, 0, tzinfo=UTC)
+    assert [d.ex_date for d in s.dividends("SPY", may)] == [
+        date(2026, 3, 20)
+    ]  # June's not yet public
+    june = next(d for d in s.dividends("SPY", NOW) if d.ex_date == date(2026, 6, 18))
+    assert june.public_time == datetime(2026, 6, 18, 13, 30, tzinfo=UTC)  # ex-date 09:30 EDT
+    assert june.declaration_date == date(2026, 1, 2)  # the vendor's date is kept as data
+    ko_like = next(d for d in s.dividends("SPY", NOW) if d.ex_date == date(2026, 9, 15))
+    assert ko_like.public_time == datetime(2026, 7, 15, 20, 0, tzinfo=UTC)  # declaration 16:00 EDT
+    assert len(s.schedule_declared) == 2
 
 
 def test_events_failure_keeps_splits() -> None:

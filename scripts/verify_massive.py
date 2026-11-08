@@ -81,6 +81,14 @@ def checked(cid: str, title: str) -> Callable[[Callable[..., Check]], Callable[.
     return wrap
 
 
+def _ex_date(skipped: str) -> date:
+    """Parse the ex-date out of an adapter skip message ("SYM ex YYYY-MM-DD: ...")."""
+    try:
+        return date.fromisoformat(skipped.split(" ex ", 1)[1][:10])
+    except (IndexError, ValueError):
+        return date.max  # unparseable: treat as recent so it is not hidden
+
+
 def as_of(d: date, hh: int = 10, mm: int = 0) -> datetime:
     return et_at(d, hh, mm)
 
@@ -93,9 +101,12 @@ def m1_dividends(c: Check, src: MassiveSource, syms: list[str]) -> Check:
     now = datetime.now(UTC)
     ok = True
     for s in syms:
-        before = len(src.skipped)
+        before, sched_before = len(src.skipped), len(src.schedule_declared)
         divs = list(src.dividends(s, now))
         skipped = [x for x in src.skipped[before:] if x.startswith(s)]
+        schedule = [x for x in src.schedule_declared[sched_before:] if x.startswith(s)]
+        recent_cutoff = (now - timedelta(days=3 * 365)).date()
+        recent_missing = [x for x in skipped if _ex_date(x) >= recent_cutoff]
         view_divs = PointInTimeView(src, as_of(REFERENCE)).dividends(s)  # point-in-time read
         bad_order = [
             str(d.ex_date) for d in divs if d.declaration_date and d.declaration_date > d.ex_date
@@ -106,6 +117,8 @@ def m1_dividends(c: Check, src: MassiveSource, syms: list[str]) -> Check:
                 "symbol": s,
                 "usable_with_declaration_date": len(divs),
                 "skipped_no_declaration_or_non_usd": len(skipped),
+                "skipped_within_last_3_years": recent_missing,
+                "schedule_declared_public_on_ex_date": schedule[-4:],
                 "earliest_ex_date_returned": str(earliest) if earliest else None,
                 "declared_after_ex_date": bad_order,
                 "known_at_2026-11-06_10:00_ET": len(view_divs),
@@ -122,15 +135,22 @@ def m1_dividends(c: Check, src: MassiveSource, syms: list[str]) -> Check:
                 "skipped_samples": skipped[:3],
             }
         )
-        ok &= bool(divs) and not skipped and not bad_order
+        ok &= bool(divs) and not recent_missing and not bad_order
     c.status = PASS if ok else PARTIAL
+    n_sched = sum(len(e["schedule_declared_public_on_ex_date"]) for e in c.evidence)
     c.summary = (
-        "Declaration dates present; public_time = declaration date 16:00 ET (DR-0014)."
+        "Recent dividends all carry declaration dates; public_time = declaration 16:00 ET "
+        "(DR-0014), or the ex-date for schedule-declared distributions (DR-0027)"
+        + (f"; {n_sched} schedule-declared shown" if n_sched else "")
+        + "."
         if ok
-        else ("Some records lack declaration dates or look inconsistent; see evidence.")
+        else "Recent records lack declaration dates or look inconsistent; see evidence."
     )
     c.notes.append(
-        "History depth on the free (Basic) plan is 2 years; Starter and above: all history."
+        "Records before about 2012 often lack declaration dates; only the last 3 years count."
+    )
+    c.notes.append(
+        "Docs list 2 years of history on the free plan; the live run showed full history."
     )
     return c
 

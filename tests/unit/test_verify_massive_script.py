@@ -152,3 +152,29 @@ def test_ns_round_trip() -> None:
     from remy_finance.data.massive import ns_to_utc
 
     assert ns_to_utc(utc_to_ns(t)) == t
+
+
+def test_m1_ignores_old_missing_declarations_but_flags_recent_ones() -> None:
+    def rows_for(old_ex: str) -> object:
+        def h(req: httpx.Request) -> httpx.Response:
+            if req.url.path == "/stocks/v1/dividends":
+                rows = [
+                    {
+                        "cash_amount": 0.5,
+                        "declaration_date": "2026-10-15",
+                        "ex_dividend_date": "2026-12-01",
+                        "distribution_type": "recurring",
+                    },
+                    {
+                        "cash_amount": 0.2,
+                        "ex_dividend_date": old_ex,
+                        "distribution_type": "recurring",
+                    },
+                ]
+                return httpx.Response(200, json={"results": rows})
+            return basic_plan(req)
+
+        return h
+
+    assert vm.m1_dividends(source(rows_for("2005-06-01")), ["KO"]).status == vm.PASS
+    assert vm.m1_dividends(source(rows_for("2026-03-01")), ["KO"]).status == vm.PARTIAL

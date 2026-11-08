@@ -26,6 +26,7 @@ import time
 from collections.abc import Callable, Sequence
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
+from itertools import pairwise
 from typing import Any
 
 import httpx
@@ -57,6 +58,23 @@ DEFAULT_RATE_SERIES: tuple[tuple[str, str, str], ...] = (
     ("TREASURY_1M", "yield_1_month", "1M"),
     ("TREASURY_3M", "yield_3_month", "3M"),
 )
+
+
+LARGE_STOCK_DIVIDEND = Decimal("1.25")  # OCC adjusts >= 25% stock dividends like splits
+
+
+def _split_type(kind: str, split_from: Decimal, split_to: Decimal) -> CorporateActionType:
+    """Massive labels some splits as stock dividends (e.g. NVDA's 4-for-1 in July 2021).
+    A stock dividend of 25% or more is treated as a split; smaller ones stay OTHER."""
+    if kind in SPLIT_TYPES:
+        return SPLIT_TYPES[kind]
+    if (
+        kind == "stock_dividend"
+        and split_from > 0
+        and split_to / split_from >= LARGE_STOCK_DIVIDEND
+    ):
+        return CorporateActionType.SPLIT
+    return CorporateActionType.OTHER
 
 
 class MassiveError(RuntimeError):
@@ -116,6 +134,7 @@ class MassiveSource:
         self._div_cache: dict[str, tuple[DividendEvent, ...]] = {}
         self._action_cache: dict[str, tuple[CorporateAction, ...]] = {}
         self.skipped: list[str] = []
+        self.schedule_declared: list[str] = []
         self.requests_made = 0
 
     # ---------------------------------------------------------------- HTTP
@@ -169,6 +188,15 @@ class MassiveSource:
                 "/stocks/v1/dividends",
                 {"ticker": symbol, "limit": "5000", "sort": "ex_dividend_date.asc"},
             )
+            # A declaration date shared by several different ex-dates is a *schedule*
+            # announcement (e.g. SPY's whole year declared on 2 Jan): the per-payment amount
+            # is not known then. Such records become public on the ex-date (DR-0027).
+            ex_by_decl: dict[str, set[str]] = {}
+            for r in rows:
+                if r.get("declaration_date"):
+                    ex_by_decl.setdefault(str(r["declaration_date"]), set()).add(
+                        str(r.get("ex_dividend_date"))
+                    )
             for r in rows:
                 ex = r.get("ex_dividend_date")
                 decl = r.get("declaration_date")
@@ -178,7 +206,11 @@ class MassiveSource:
                 if str(r.get("currency", "USD")) != "USD":
                     self.skipped.append(f"{symbol} ex {ex}: currency {r.get('currency')}")
                     continue
-                public = et_at(date.fromisoformat(decl), 16)
+                if len(ex_by_decl.get(str(decl), ())) > 1:
+                    public = et_at(date.fromisoformat(str(ex)), 9, 30)
+                    self.schedule_declared.append(f"{symbol} ex {ex}: schedule declared {decl}")
+                else:
+                    public = et_at(date.fromisoformat(decl), 16)
                 dist = str(r.get("distribution_type", "unknown"))
                 out.append(
                     DividendEvent(
@@ -218,7 +250,9 @@ class MassiveSource:
             out.append(
                 CorporateAction(
                     symbol=symbol,
-                    action_type=SPLIT_TYPES.get(kind, CorporateActionType.OTHER),
+                    action_type=_split_type(
+                        kind, Decimal(str(r["split_from"])), Decimal(str(r["split_to"]))
+                    ),
                     effective_date=eff,
                     details=(
                         ("adjustment_type", kind),
@@ -236,18 +270,25 @@ class MassiveSource:
     def _ticker_changes(self, symbol: str, now: datetime) -> list[CorporateAction]:
         payload = self._get(f"/vX/reference/tickers/{symbol}/events", {"types": "ticker_change"})
         events = ((payload or {}).get("results") or {}).get("events") or []
+        changes = sorted(
+            (str(e["date"]), str((e.get("ticker_change") or {}).get("ticker", "")))
+            for e in events
+            if e.get("type") == "ticker_change"
+        )
         out: list[CorporateAction] = []
-        for e in events:
-            if e.get("type") != "ticker_change":
+        # The earliest event is the ticker the asset started with in Massive's records,
+        # not a change; a change is an event whose ticker differs from the one before.
+        for (_, previous), (when, ticker) in pairwise(changes):
+            if ticker == previous:
                 continue
-            eff = date.fromisoformat(str(e["date"]))
+            eff = date.fromisoformat(when)
             public = et_at(eff, 9, 30)
             out.append(
                 CorporateAction(
                     symbol=symbol,
                     action_type=CorporateActionType.SYMBOL_CHANGE,
                     effective_date=eff,
-                    details=(("ticker", str((e.get("ticker_change") or {}).get("ticker", ""))),),
+                    details=(("from_ticker", previous), ("to_ticker", ticker)),
                     event_time=public,
                     public_time=public,
                     ingest_time=now,
