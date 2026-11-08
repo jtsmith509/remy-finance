@@ -68,6 +68,10 @@ class SnapshotIntegrityError(RuntimeError):
     pass
 
 
+class LateSnapshotError(ValueError):
+    """A prospective board falls outside its slot's window (DR-0022): the slot is missed."""
+
+
 class SnapshotManifest(Record):
     store_version: str
     snapshot_id: str
@@ -302,7 +306,7 @@ class SnapshotStore:
         if state.mode is Mode.PROSPECTIVE:
             delay = state.as_of - scheduled
             if not timedelta(0) <= delay <= max_delay:
-                raise ValueError(
+                raise LateSnapshotError(
                     f"prospective as_of is {delay} from the scheduled time (allowed 0..{max_delay})"
                 )
         elif state.as_of != scheduled:

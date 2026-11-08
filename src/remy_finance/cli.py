@@ -190,7 +190,12 @@ def snapshot_take(
         prospective_window,
         snapshot_time,
     )
-    from remy_finance.snapshots.store import SnapshotStore
+    from remy_finance.snapshots.store import (
+        GapRecordedError,
+        LateSnapshotError,
+        SnapshotExistsError,
+        SnapshotStore,
+    )
 
     sess = _session(session)
     now = datetime.now(UTC)
@@ -200,8 +205,27 @@ def snapshot_take(
         typer.echo(f"not taking a snapshot: {e}")
         raise typer.Exit(2) from None
     window = f"{start.astimezone(NEW_YORK):%H:%M}-{end.astimezone(NEW_YORK):%H:%M} ET"
+    today = et_date(now)
+    store = SnapshotStore(_data_dir() / "snapshots")
+    kinds = (
+        (SnapshotKind.DECISION, SnapshotKind.EXECUTION)
+        if with_execution
+        else (SnapshotKind.DECISION,)
+    )
+
+    def miss(remaining: tuple[SnapshotKind, ...], reason: str) -> None:
+        """Record each missed slot as a gap (DR-0022/0024); never over a stored snapshot."""
+        for k in remaining:
+            try:
+                gap = store.record_gap(today, sess, k, reason[:300])
+                typer.echo(f"{k.value}: gap recorded ({gap.reason})")
+            except SnapshotExistsError:
+                typer.echo(f"{k.value}: already stored; no gap recorded")
+
     if now > end:
+        started = f"{now.astimezone(NEW_YORK):%H:%M:%S} ET"
         typer.echo(f"not taking a snapshot: too late, the {sess.value} window today was {window}")
+        miss(kinds, f"missed: take started at {started}, after the {window} window")
         raise typer.Exit(2)
     if now < start:
         delay = (start - now).total_seconds()
@@ -210,34 +234,48 @@ def snapshot_take(
             raise typer.Exit(2)
         typer.echo(f"waiting {delay / 60:.1f} min for the {window} window")
         time.sleep(delay)
-    syms, universe_version = _symbols(symbols, et_date(datetime.now(UTC)))
+    syms, universe_version = _symbols(symbols, today)
     theta, source = _sources(no_events)
-    store = SnapshotStore(_data_dir() / "snapshots")
     prov = (Provenance(source="cli", details=(("command", "snapshot take"),)),)
     decision_id: str | None = None
-    kinds = (
-        (SnapshotKind.DECISION, SnapshotKind.EXECUTION)
-        if with_execution
-        else (SnapshotKind.DECISION,)
-    )
-    for kind in kinds:
+    for i, kind in enumerate(kinds):
+        existing = store.find(Mode.PROSPECTIVE, today, sess, kind)
+        if existing is not None:  # re-run: a stored snapshot is final
+            m = store.load_manifest(existing)
+            typer.echo(f"{kind.value}: already stored {m.snapshot_id[:16]}; skipping")
+            if kind is SnapshotKind.DECISION:
+                decision_id = m.snapshot_id
+            continue
+        if store.has_gap(today, sess, kind):
+            typer.echo(f"{kind.value}: this slot is already recorded as a gap")
+            miss(kinds[i + 1 :], f"missed: the {kinds[i].value} slot is a gap")
+            raise typer.Exit(2)
         if kind is SnapshotKind.EXECUTION:
-            exec_delay = (
-                snapshot_time(et_date(datetime.now(UTC)), sess, kind) - datetime.now(UTC)
-            ).total_seconds()
+            exec_delay = (snapshot_time(today, sess, kind) - datetime.now(UTC)).total_seconds()
             if exec_delay > 0:
                 typer.echo(f"waiting {exec_delay:.0f}s for the execution snapshot")
                 time.sleep(exec_delay)
-        state = build_prospective(
-            theta,
-            source,
-            sess,
-            universe_version=universe_version,
-            underlyings=syms,
-            provenance=prov,
-        )
-        assert state.mode is Mode.PROSPECTIVE
-        m = store.write(state, kind=kind, decision_snapshot_id=decision_id)
+        try:
+            state = build_prospective(
+                theta,
+                source,
+                sess,
+                universe_version=universe_version,
+                underlyings=syms,
+                provenance=prov,
+            )
+            m = store.write(state, kind=kind, decision_snapshot_id=decision_id)
+        except LateSnapshotError as e:
+            typer.echo(f"{kind.value}: capture overran its window: {e}")
+            miss(kinds[i:], f"missed: capture overran the window ({e})")
+            raise typer.Exit(2) from None
+        except GapRecordedError:
+            typer.echo(f"{kind.value}: a gap was recorded for this slot while capturing")
+            miss(kinds[i + 1 :], f"missed: the {kind.value} slot is a gap")
+            raise typer.Exit(2) from None
+        except Exception as e:  # the slot is missed whatever the cause; then surface the error
+            miss(kinds[i:], f"missed: capture failed: {type(e).__name__}: {e}")
+            raise
         typer.echo(
             f"{kind.value}: {m.snapshot_id[:16]} as_of {m.as_of.isoformat()} "
             f"quotes {m.n_option_quotes} "
