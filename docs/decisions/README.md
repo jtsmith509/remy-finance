@@ -24,5 +24,6 @@
 | [DR-0020](DR-0020-movegen-lattice.md) | Move-generator strike lattice and enumeration details | R0.7 | proposed |
 | [DR-0021](DR-0021-data-layer.md) | Data-layer semantics (PointInTimeView, adapters) | R0.3 | proposed |
 | [DR-0022](DR-0022-snapshot-store.md) | Snapshot store rules SNAPSTORE-1 | R0.4 | proposed |
+| [DR-0023](DR-0023-univ-1-details.md) | UNIV-1 implementation details; option-volume read path | R0.5 | proposed |
 
 Each record has these sections: context, options considered, decision, consequences. Status stays *proposed* until Josh confirms it. A confirmed DR is superseded only by a new, linked DR; it is never edited in place.
