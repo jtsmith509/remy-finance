@@ -10,6 +10,7 @@ from pathlib import Path
 import pytest
 
 from remy_finance.core import (
+    DividendEvent,
     LookaheadError,
     MarketState,
     Mode,
@@ -111,8 +112,22 @@ class FailingFor(FixtureSource):
 def test_vendor_error_for_one_symbol_is_recorded() -> None:
     src = FailingFor(fixture_source().records())
     s = replay(src, syms=("XYZ", "BAD"))
-    assert any(n.scope == "BAD" and n.code == "RuntimeError" for n in s.quality_notes)
+    assert any(n.scope == "BAD" and n.code == "OPTION_QUOTES:RuntimeError" for n in s.quality_notes)
     assert s.option_quotes
+
+
+class NoEvents(FixtureSource):
+    def dividends(self, symbol: str, known_as_of: datetime) -> Sequence[DividendEvent]:
+        raise NotImplementedError("no dividend source")
+
+
+def test_failed_dividend_read_keeps_quotes() -> None:
+    """Regression: a dividend-source failure (e.g. --no-events) must not discard the quotes."""
+    s = replay(NoEvents(fixture_source().records()))
+    assert len(s.option_quotes) == 3 and len(s.underlying_quotes) == 1
+    assert [(n.scope, n.code) for n in s.quality_notes] == [
+        ("XYZ", "DIVIDENDS:NotImplementedError")
+    ]
 
 
 class Leaky(FixtureSource):
@@ -270,3 +285,14 @@ def test_board_independent_of_workers_and_progress_reported() -> None:
         progress=lambda sym, done, total, n, secs: seen.append(sym),
     )
     assert one.snapshot_id == four.snapshot_id and sorted(seen) == ["ABC", "XYZ"]
+
+
+class NoUnderlying(FixtureSource):
+    def underlying_quote_at(self, symbol: str, ts: datetime) -> UnderlyingQuote | None:
+        raise RuntimeError("403 stock tier")
+
+
+def test_failed_underlying_read_keeps_options_and_notes_once() -> None:
+    s = replay(NoUnderlying(fixture_source().records()))
+    assert len(s.option_quotes) == 3 and s.underlying_quotes == ()
+    assert [n.code for n in s.quality_notes] == ["UNDERLYING_QUOTE:RuntimeError"]

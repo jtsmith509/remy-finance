@@ -66,6 +66,13 @@
 - **Members:** SPY, QQQ, NVDA, TSLA, IWM, AAPL, MU, INTC, AMZN, TLT, META, AMD, GOOGL, MSFT, HYG, PLTR, SOFI, NFLX, MSTR, ORCL, AVGO, GLD, HOOD, SLV, SMH, XLF, SMCI, BAC, XLE, WMT, TSM, COIN, GDX, BA, BABA, RIVN, EEM, XLU, UBER, T, XLP, VZ, PFE, UNH, KRE, F, ARM, C, XOM, FXI.
 - **Observation:** XLB, XLC, DE and MA trade only 3–9k contracts a day. That's a candidate-list revision to consider later (`UNIV-CANDIDATES-2`). It needs no action now.
 
+**First `remy snapshot build --date 2026-11-06 --session open --no-events`** (2026-11-08): **defective; removed and re-run.**
+- **Symptom:** both boards stored with **0 option quotes** and 50 notes.
+- **Cause:** a builder bug. Each symbol's four reads (chain, underlying, dividends, corporate actions) shared one error handler. With `--no-events`, the dividend read raises by design, so the quotes already fetched for that symbol were discarded.
+- **Fix:** each read is now guarded separately. A failed read becomes a note naming it (e.g. `DIVIDENDS:UnsupportedDataError`), and the other reads are kept. Regression tests cover failed dividend and underlying reads.
+- **Disposal:** the two defective **replay** boards (`data/snapshots/replay/2026-11-06/`) were deleted by hand so the slot could be rebuilt. This is a deliberate, recorded exception to write-once, allowed only because they were replay data produced by a bug. A prospective board would never be deleted; it would get a linked correction instead.
+- **Timing seen:** the 50-symbol execution board was fetched in **37.5 s** with 4 workers.
+
 ## Remaining before Stop Point B closes (on the Mac mini)
 ```bash
 cd ~/remy-finance && git pull && uv sync

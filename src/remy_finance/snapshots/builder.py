@@ -86,6 +86,20 @@ class _SymbolData:
     underlying: UnderlyingQuote | None
     dividends: tuple[DividendEvent, ...]
     actions: tuple[CorporateAction, ...]
+    errors: tuple[QualityNote, ...]  # one per failed read; the other reads are kept
+
+
+def _read[T](sym: str, what: str, fn: Callable[[], T], default: T, errors: list[QualityNote]) -> T:
+    """One guarded read: a vendor/data failure becomes a note; look-ahead always raises."""
+    try:
+        return fn()
+    except LookaheadError:
+        raise
+    except Exception as e:
+        errors.append(
+            QualityNote(scope=sym, code=f"{what}:{type(e).__name__}", detail=str(e)[:300])
+        )
+        return default
 
 
 SymbolProgress = Callable[[str, int, int, int, float], None]
@@ -111,23 +125,26 @@ def build_from_view(
     view = PointInTimeView(source, as_of)
     symbols = sorted(set(underlyings))
 
-    def fetch(sym: str) -> tuple[str, _SymbolData | Exception, float]:
+    def fetch(sym: str) -> tuple[str, _SymbolData, float]:
         t0 = time.perf_counter()
-        out: _SymbolData | Exception
-        try:
-            out = _SymbolData(
-                chain=view.chain_quotes(sym),
-                underlying=view.underlying_quote(sym),
-                dividends=view.dividends(sym),
-                actions=view.corporate_actions(sym),
-            )
-        except LookaheadError:
-            raise
-        except Exception as e:  # a vendor/data problem for one symbol is a gap, not a crash
-            out = e
+        errors: list[QualityNote] = []
+        empty_q: tuple[OptionQuote, ...] = ()
+        empty_d: tuple[DividendEvent, ...] = ()
+        empty_a: tuple[CorporateAction, ...] = ()
+        out = _SymbolData(
+            chain=_read(sym, "OPTION_QUOTES", lambda: view.chain_quotes(sym), empty_q, errors),
+            underlying=_read(
+                sym, "UNDERLYING_QUOTE", lambda: view.underlying_quote(sym), None, errors
+            ),
+            dividends=_read(sym, "DIVIDENDS", lambda: view.dividends(sym), empty_d, errors),
+            actions=_read(
+                sym, "CORPORATE_ACTIONS", lambda: view.corporate_actions(sym), empty_a, errors
+            ),
+            errors=tuple(errors),
+        )
         return sym, out, time.perf_counter() - t0
 
-    results: dict[str, _SymbolData | Exception] = {}
+    results: dict[str, _SymbolData] = {}
     with ThreadPoolExecutor(max_workers=max(1, max_workers)) as pool:
         futures = [pool.submit(fetch, sym) for sym in symbols]
         try:
@@ -135,7 +152,7 @@ def build_from_view(
                 sym, out, secs = fut.result()  # re-raises LookaheadError
                 results[sym] = out
                 if progress is not None:
-                    n = 0 if isinstance(out, Exception) else len(out.chain)
+                    n = len(out.chain)
                     progress(sym, len(results), len(symbols), n, secs)
         except BaseException:
             for f in futures:
@@ -149,17 +166,16 @@ def build_from_view(
     notes: list[QualityNote] = []
     for sym in symbols:  # fixed order: the board is independent of completion order
         out = results[sym]
-        if isinstance(out, Exception):
-            notes.append(_note(sym, out))
-            continue
+        notes.extend(out.errors)
+        failed = {n.code.split(":")[0] for n in out.errors}
         divs.extend(out.dividends)
         acts.extend(out.actions)
-        if not out.chain:
+        if not out.chain and "OPTION_QUOTES" not in failed:
             notes.append(QualityNote(scope=sym, code="NO_OPTION_QUOTES"))
-        if out.underlying is None:
-            notes.append(QualityNote(scope=sym, code="NO_UNDERLYING_QUOTE"))
-        else:
+        if out.underlying is not None:
             unders.append(flag_underlying_quote(out.underlying, as_of, rule))
+        elif "UNDERLYING_QUOTE" not in failed:
+            notes.append(QualityNote(scope=sym, code="NO_UNDERLYING_QUOTE"))
         options.extend(flag_option_quote(q, as_of, rule) for q in out.chain)
     try:
         rates = list(view.rates())
