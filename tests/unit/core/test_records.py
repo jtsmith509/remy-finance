@@ -57,13 +57,17 @@ def all_records() -> list[Record]:
         QualityNote(scope="XYZ", code="GAP", detail="missing chain"),
         Leg(contract=f.contract(), side=Side.SHORT, ratio=2),
         structure,
+        Candidate.priced(structure, quantity=3, entry_rule="FILL-1", exit_policy_id="HOLD-1"),
         Candidate(
-            structure=structure,
-            quantity=3,
+            legs=structure.legs,
+            structure_type=structure.structure_type,
+            quantity=0,
             entry_rule="FILL-1",
             exit_policy_id="HOLD-1",
-            priceability=Priceability.PRICED,
+            priceability=Priceability.UNPRICEABLE,
+            unpriceable_reason="ONE_SIDED_LEG",
         ),
+        core.FEES_1,
         Candidate.null_move(),
         f.market_state(corporate_actions=(ca,)),
     ]
@@ -212,7 +216,7 @@ def _mentions_float(annotation: Any) -> bool:
 def test_no_record_declares_a_float_field() -> None:
     record_types = [
         obj
-        for module in (core.instruments, core.market, core.record)
+        for module in (core.instruments, core.market, core.record, core.structure, core.fees)
         for _, obj in inspect.getmembers(module, inspect.isclass)
         if issubclass(obj, Record)
     ]
@@ -285,33 +289,39 @@ def test_adjusted_root_cannot_be_standard() -> None:
 
 
 def test_structure_rules() -> None:
-    long_xyz = Leg(contract=f.contract("100"), side=Side.LONG)
+    long_c = f.leg("100", Right.CALL, Side.LONG)
     with pytest.raises(ValidationError, match="one underlying"):
-        Structure(
-            legs=(long_xyz, Leg(contract=f.contract("100", sym="ABC"), side=Side.SHORT)),
-            structure_type=StructureType.VERTICAL_DEBIT,
-            capital_at_risk=Decimal("1"),
-            max_loss=Decimal("1"),
-            max_gain=None,
+        Structure.price(
+            [long_c, f.leg("105", Right.CALL, Side.SHORT, sym="ABC")],
+            ["1", "1"],
+            StructureType.VERTICAL_DEBIT,
+            core.FEES_1,
         )
     with pytest.raises(ValidationError, match="only one leg"):
-        Structure(
-            legs=(long_xyz, long_xyz),
-            structure_type=StructureType.LONG_CALL,
-            capital_at_risk=Decimal("1"),
-            max_loss=Decimal("1"),
-            max_gain=None,
-        )
-    with pytest.raises(ValidationError, match="capital_at_risk"):
-        f.bull_call_spread().model_copy(update={"capital_at_risk": Decimal("100")})
-    with pytest.raises(ValidationError):
-        Structure(
-            legs=(),
-            structure_type=StructureType.LONG_CALL,
-            capital_at_risk=Decimal("1"),
-            max_loss=Decimal("1"),
-            max_gain=None,
-        )
+        Structure.price([long_c, long_c], ["1", "1"], StructureType.LONG_CALL, core.FEES_1)
+    other_exp = Leg(
+        contract=OptionContract.build("XYZ", date(2026, 12, 18), "105", Right.CALL),
+        side=Side.SHORT,
+    )
+    with pytest.raises(ValidationError, match="one expiration"):
+        Structure.price([long_c, other_exp], ["2", "1"], StructureType.VERTICAL_DEBIT, core.FEES_1)
+    with pytest.raises(ValidationError, match="one price per leg"):
+        f.bull_call_spread().model_copy(update={"entry_prices": (Decimal("2.5"),)})
+
+
+@pytest.mark.parametrize(
+    "update",
+    [
+        {"capital_at_risk": Decimal("151.29")},
+        {"max_loss": Decimal("149")},
+        {"max_gain": Decimal("351")},
+        {"max_gain": None},
+        {"entry_prices": (Decimal("2.40"), Decimal("1.00"))},
+    ],
+)
+def test_structure_numbers_must_match_legs(update: dict[str, Any]) -> None:
+    with pytest.raises(ValidationError, match="imply"):
+        f.bull_call_spread().model_copy(update=update)
 
 
 def test_candidate_rules() -> None:
@@ -319,23 +329,36 @@ def test_candidate_rules() -> None:
     assert null.is_null_move and null.quantity == 0
     with pytest.raises(ValidationError):
         null.model_copy(update={"quantity": 1})
+    s = f.bull_call_spread()
     with pytest.raises(ValidationError, match="reason"):
         Candidate(
-            structure=f.bull_call_spread(),
+            legs=s.legs,
+            structure_type=s.structure_type,
             quantity=1,
             entry_rule="FILL-1",
             exit_policy_id="HOLD-1",
             priceability=Priceability.UNPRICEABLE,
         )
-    ok = Candidate(
-        structure=f.bull_call_spread(),
-        quantity=1,
-        entry_rule="FILL-1",
-        exit_policy_id="HOLD-1",
-        priceability=Priceability.UNPRICEABLE,
-        unpriceable_reason="ONE_SIDED_LEG XYZ 105C",
-    )
-    assert not ok.is_null_move
+    with pytest.raises(ValidationError, match="priced structure"):
+        Candidate(
+            legs=s.legs,
+            structure_type=s.structure_type,
+            quantity=1,
+            entry_rule="FILL-1",
+            exit_policy_id="HOLD-1",
+            priceability=Priceability.PRICED,
+        )
+    with pytest.raises(ValidationError, match="unbounded"):
+        Candidate(
+            legs=(f.leg("100", Right.CALL, Side.SHORT),),
+            structure_type=StructureType.OTHER_DEFINED_RISK,
+            quantity=1,
+            entry_rule="FILL-1",
+            exit_policy_id="HOLD-1",
+            priceability=Priceability.UNPRICEABLE,
+            unpriceable_reason="ONE_SIDED_LEG",
+        )
+    assert not Candidate.priced(s, 1, "FILL-1", "HOLD-1").is_null_move
 
 
 # ------------------------------------------------------------------- MarketState

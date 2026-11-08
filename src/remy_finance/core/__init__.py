@@ -17,7 +17,8 @@ from remy_finance.core.enums import (
     Style,
 )
 from remy_finance.core.errors import LookaheadError
-from remy_finance.core.instruments import Candidate, Leg, OptionContract, Structure
+from remy_finance.core.fees import FEES_1, FeeSchedule
+from remy_finance.core.instruments import Leg, OptionContract
 from remy_finance.core.market import (
     CorporateAction,
     DividendEvent,
@@ -28,14 +29,18 @@ from remy_finance.core.market import (
     RatePoint,
     UnderlyingQuote,
 )
+from remy_finance.core.payoff import UndefinedRiskError
 from remy_finance.core.record import Record
+from remy_finance.core.structure import Candidate, Structure
 
 __all__ = [
+    "FEES_1",
     "Candidate",
     "CorporateAction",
     "CorporateActionType",
     "DividendEvent",
     "DividendType",
+    "FeeSchedule",
     "Leg",
     "LookaheadError",
     "MarketState",
@@ -54,5 +59,6 @@ __all__ = [
     "Structure",
     "StructureType",
     "Style",
+    "UndefinedRiskError",
     "UnderlyingQuote",
 ]

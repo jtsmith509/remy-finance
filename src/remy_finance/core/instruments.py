@@ -1,4 +1,4 @@
-"""Option contracts, legs, structures and candidates (handoff Section 4)."""
+"""Option contracts and legs (handoff Section 4). Structures live in ``structure``."""
 
 from __future__ import annotations
 
@@ -9,9 +9,9 @@ from typing import Self
 
 from pydantic import Field, field_validator, model_validator
 
-from remy_finance.core.enums import Priceability, Right, Side, StructureType, Style
+from remy_finance.core.enums import Right, Side, Style
 from remy_finance.core.record import Record
-from remy_finance.core.types import NonNegDec, PosDec
+from remy_finance.core.types import PosDec
 
 _OSI_TAIL = re.compile(r"^(\d{6})([CP])(\d{8})$")
 _OSI_ROOT = re.compile(r"^[A-Z][A-Z0-9.]{0,5}$")
@@ -122,74 +122,3 @@ class Leg(Record):
     contract: OptionContract
     side: Side
     ratio: int = Field(default=1, ge=1)
-
-
-class Structure(Record):
-    """An ordered, defined-risk combination of legs.
-
-    ``capital_at_risk``, ``max_loss`` and ``max_gain`` are **per unit** (one set of leg
-    ratios), in dollars. They are computed by the payoff module (R0.6); this type only
-    checks that they are consistent. ``max_gain`` is None when unbounded.
-    """
-
-    legs: tuple[Leg, ...] = Field(min_length=1)
-    structure_type: StructureType
-    capital_at_risk: NonNegDec
-    max_loss: NonNegDec
-    max_gain: NonNegDec | None
-
-    @model_validator(mode="after")
-    def _check_legs(self) -> Self:
-        underlyings = {leg.contract.underlying for leg in self.legs}
-        if len(underlyings) != 1:
-            raise ValueError(f"all legs must share one underlying, got {sorted(underlyings)}")
-        symbols = [leg.contract.osi_symbol for leg in self.legs]
-        if len(set(symbols)) != len(symbols):
-            raise ValueError("a contract may appear in only one leg")
-        if not all(leg.contract.standard_deliverable for leg in self.legs):
-            raise ValueError("non-standard-deliverable contracts are excluded")
-        if self.capital_at_risk < self.max_loss:
-            raise ValueError("capital_at_risk must be >= max_loss")
-        return self
-
-    @property
-    def underlying(self) -> str:
-        return self.legs[0].contract.underlying
-
-
-class Candidate(Record):
-    """A candidate trade, or the null move (``structure is None``)."""
-
-    structure: Structure | None
-    quantity: int = Field(ge=0)
-    entry_rule: str = Field(min_length=1)
-    exit_policy_id: str = Field(min_length=1)
-    priceability: Priceability
-    unpriceable_reason: str | None = None
-
-    @model_validator(mode="after")
-    def _check(self) -> Self:
-        if self.structure is None:
-            if self.quantity != 0:
-                raise ValueError("the null move has quantity 0")
-            if self.priceability is not Priceability.PRICED or self.unpriceable_reason:
-                raise ValueError("the null move is always PRICED with no reason")
-        if self.priceability is Priceability.UNPRICEABLE and not self.unpriceable_reason:
-            raise ValueError("UNPRICEABLE candidates must state a reason")
-        if self.priceability is Priceability.PRICED and self.unpriceable_reason is not None:
-            raise ValueError("PRICED candidates must not carry an unpriceable_reason")
-        return self
-
-    @property
-    def is_null_move(self) -> bool:
-        return self.structure is None
-
-    @classmethod
-    def null_move(cls, entry_rule: str = "NONE", exit_policy_id: str = "NONE") -> Candidate:
-        return cls(
-            structure=None,
-            quantity=0,
-            entry_rule=entry_rule,
-            exit_policy_id=exit_policy_id,
-            priceability=Priceability.PRICED,
-        )

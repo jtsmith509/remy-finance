@@ -6,6 +6,7 @@ from datetime import UTC, date, datetime
 from decimal import Decimal
 
 from remy_finance.core import (
+    FEES_1,
     DividendEvent,
     Leg,
     MarketState,
@@ -86,16 +87,17 @@ def rate() -> RatePoint:
     )
 
 
+def leg(strike: str, right: Right, side: Side, ratio: int = 1, sym: str = "XYZ") -> Leg:
+    return Leg(contract=contract(strike, right, sym), side=side, ratio=ratio)
+
+
 def bull_call_spread() -> Structure:
-    return Structure(
-        legs=(
-            Leg(contract=contract("100"), side=Side.LONG),
-            Leg(contract=contract("105"), side=Side.SHORT),
-        ),
-        structure_type=StructureType.VERTICAL_DEBIT,
-        capital_at_risk=Decimal("151.30"),
-        max_loss=Decimal("150"),
-        max_gain=Decimal("350"),
+    """Handoff R0.6 fixture: +1 100C @ 2.50, -1 105C @ 1.00."""
+    return Structure.price(
+        [leg("100", Right.CALL, Side.LONG), leg("105", Right.CALL, Side.SHORT)],
+        ["2.50", "1.00"],
+        StructureType.VERTICAL_DEBIT,
+        FEES_1,
     )
 
 
