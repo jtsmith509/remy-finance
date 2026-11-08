@@ -42,7 +42,7 @@
 - The Polygon pagination loop raised on an exact page limit.
 
 ## Measured performance
-- **Move generator:** a synthetic SPY-sized board (22k quotes, 30 expirations) gives about 37.5k candidates in about 8 s. The 50-name estimate is roughly 300–350k candidates and about 70 s per snapshot.
+- **Move generator:** a synthetic SPY-sized board (22k quotes, 30 expirations) gives about 37.5k candidates in about 8 s. **On the real 50-name board: 260,806 candidates in 18.2 s** (see *Live runs*).
 - **Hashing:** a 22k-quote board hashes in about 0.5 s.
 - Both will be re-measured on real boards in the live R0.4 run (`--movegen`).
 
@@ -73,13 +73,21 @@
 - **Disposal:** the two defective **replay** boards (`data/snapshots/replay/2026-11-06/`) were deleted by hand so the slot could be rebuilt. This is a deliberate, recorded exception to write-once, allowed only because they were replay data produced by a bug. A prospective board would never be deleted; it would get a linked correction instead.
 - **Timing seen:** the 50-symbol execution board was fetched in **37.5 s** with 4 workers.
 
+**Second `remy snapshot build --date 2026-11-06 --session open --no-events --movegen`** (2026-11-08): **OK.**
+- **Boards stored:** DECISION `51afcc79e22154bf` (10:00 ET) and EXECUTION `72cb26646ad3e2db` (10:05 ET), each for 50 symbols from universe `UNIV-1:2026-11-02`.
+- **Notes:** each symbol carries exactly two, `DIVIDENDS:UnsupportedDataError` and `CORPORATE_ACTIONS:UnsupportedDataError`, as expected without Polygon.
+- **Move generator on the real decision board:** **260,806 candidates in 18.2 s**, with list hash `5c76914d72ee3f08…`.
+  - **Breakdown:** 231,928 priced, 28,877 unpriceable (about 11%: a leg without a two-sided quote, each kept with a reason), and 21,105 priced but quantity 0 under SIZE-1.
+  - **By type:** iron condors 117,811; debit verticals 43,566; credit verticals 43,566; call butterflies 18,947; put butterflies 18,947; long calls 8,984; long puts 8,984; the null move 1.
+  - **Against the estimates:** this is consistent with DR-0020's estimate of 300–350k. It's about 4× faster than the synthetic-board estimate of about 70 s.
+
 ## Remaining before Stop Point B closes (on the Mac mini)
 ```bash
 cd ~/remy-finance && git pull && uv sync
 export POLYGON_API_KEY=...   # or read it from the keychain
 uv run python scripts/verify_polygon.py                         # DR-0014 + EXP-1 close spot-check
 uv run remy universe build --month 2026-11                      # DONE 2026-11-08 (see above)
-uv run remy snapshot build --date 2026-11-06 --session open --movegen     # replay snapshot
+uv run remy snapshot build --date 2026-11-06 --session open --movegen     # DONE with --no-events (see above); redo with events after Polygon
 # On a trading day, between 10:00 and 10:10 ET:
 uv run remy snapshot take --session open --with-execution --movegen      # live prospective snapshot
 uv run remy snapshot verify
