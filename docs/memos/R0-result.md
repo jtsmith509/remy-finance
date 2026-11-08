@@ -85,6 +85,21 @@
 
 **First `remy snapshot take`** (Sunday 2026-11-08): **correctly refused**, because it's not a trading session. It did fetch a live board before the store refused it, though. Fixed: `take` now checks the trading-day window before fetching anything, and `--wait` lets it start early and wait for 10:00 ET. The live run is scheduled for Monday 2026-11-09.
 
+## Independent review (Codex, 2026-11-08)
+Codex reviewed commit `aeda0c2` against `docs/review/R0-review-brief.md` and found **8 defects: 4 blockers, 3 major and 1 minor**. All 8 were verified, fixed with regression tests (each shown to fail on `aeda0c2`) and pushed. Details are in [`docs/review/R0-findings.md`](../review/R0-findings.md).
+- **Blockers fixed:**
+  - F01: per-slot finality is now atomic.
+  - F02: live `LookaheadError` is no longer swallowed.
+  - F03: floats are rejected at factory inputs.
+  - F04: payoff arithmetic is exact at any price.
+- **Major and minor fixes:**
+  - F05: missed captures now become gaps.
+  - F06: event reads are independent.
+  - F07: universe writes are atomic.
+  - F08: `OptionVolume` fixtures can be reloaded.
+- **New decision records for confirmation:** DR-0024 (slot finality, amending DR-0022) and DR-0025 (exact Decimal arithmetic).
+- **Gate after the fixes:** 289 tests pass; ruff, format and mypy are clean.
+
 ## Remaining before Stop Point B closes (on the Mac mini)
 ```bash
 cd ~/remy-finance && git pull && uv sync
@@ -97,5 +112,6 @@ uv run remy snapshot take --session open --with-execution --no-events --movegen 
 uv run remy snapshot verify                                      # DONE 2026-11-08 (2 OK); re-run after Monday
 ```
 
-## Remaining question for Josh
+## Remaining questions for Josh
+- Confirm DR-0024 and DR-0025, which were added in response to the review.
 After the live runs, do the results satisfy you before R1 starts? That covers Polygon declaration-date coverage, close agreement, and the real snapshot sizes and move-generator timing.
