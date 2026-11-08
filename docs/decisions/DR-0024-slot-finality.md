@@ -1,6 +1,6 @@
 # DR-0024: Atomic slot finality and per-slot gap files (amends DR-0022)
 
-- **Status:** proposed
+- **Status:** accepted (confirmed by Josh, 2026-11-08, after the independent R0 review)
 - **Date:** 2026-11-08
 - **Source:** Independent R0 review, finding F01 (`docs/review/R0-findings.md`); amends DR-0022 (accepted), item 6, and the store layout
 - **Stage:** R0

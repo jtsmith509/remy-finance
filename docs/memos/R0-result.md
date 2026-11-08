@@ -97,7 +97,7 @@ Codex reviewed commit `aeda0c2` against `docs/review/R0-review-brief.md` and fou
   - F06: event reads are independent.
   - F07: universe writes are atomic.
   - F08: `OptionVolume` fixtures can be reloaded.
-- **New decision records for confirmation:** DR-0024 (slot finality, amending DR-0022) and DR-0025 (exact Decimal arithmetic).
+- **New decision records:** DR-0024 (slot finality, amending DR-0022) and DR-0025 (exact Decimal arithmetic), **both accepted by Josh on 2026-11-08**.
 - **Gate after the fixes:** 289 tests pass; ruff, format and mypy are clean.
 
 ## Remaining before Stop Point B closes (on the Mac mini)
@@ -112,6 +112,5 @@ uv run remy snapshot take --session open --with-execution --no-events --movegen 
 uv run remy snapshot verify                                      # DONE 2026-11-08 (2 OK); re-run after Monday
 ```
 
-## Remaining questions for Josh
-- Confirm DR-0024 and DR-0025, which were added in response to the review.
+## Remaining question for Josh
 After the live runs, do the results satisfy you before R1 starts? That covers Polygon declaration-date coverage, close agreement, and the real snapshot sizes and move-generator timing.

@@ -1,6 +1,6 @@
 # DR-0025: Exact Decimal arithmetic and strict numeric inputs
 
-- **Status:** proposed
+- **Status:** accepted (confirmed by Josh, 2026-11-08, after the independent R0 review)
 - **Date:** 2026-11-08
 - **Source:** Independent R0 review, findings F03 and F04 (`docs/review/R0-findings.md`); refines DR-0016 and DR-0018 (accepted)
 - **Stage:** R0

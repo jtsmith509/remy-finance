@@ -25,7 +25,7 @@
 | [DR-0021](DR-0021-data-layer.md) | Data-layer semantics (PointInTimeView, adapters) | R0.3 | accepted |
 | [DR-0022](DR-0022-snapshot-store.md) | Snapshot store rules SNAPSTORE-1 | R0.4 | accepted |
 | [DR-0023](DR-0023-univ-1-details.md) | UNIV-1 implementation details; option-volume read path | R0.5 | accepted |
-| [DR-0024](DR-0024-slot-finality.md) | Atomic slot finality and per-slot gap files (amends DR-0022) | R0 review | proposed |
-| [DR-0025](DR-0025-exact-decimal-arithmetic.md) | Exact Decimal arithmetic and strict numeric inputs | R0 review | proposed |
+| [DR-0024](DR-0024-slot-finality.md) | Atomic slot finality and per-slot gap files (amends DR-0022) | R0 review | accepted |
+| [DR-0025](DR-0025-exact-decimal-arithmetic.md) | Exact Decimal arithmetic and strict numeric inputs | R0 review | accepted |
 
 Each record has these sections: context, options considered, decision, consequences. Status stays *proposed* until Josh confirms it. A confirmed DR is superseded only by a new, linked DR; it is never edited in place.

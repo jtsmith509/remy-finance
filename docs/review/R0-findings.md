@@ -21,7 +21,7 @@ Each finding was first **checked against the code** (and F04 was reproduced nume
 
 **Gate after the fixes:** `ruff check`, `ruff format --check` and `mypy` (43 files) are clean; `pytest`: **289 passed**.
 
-**New decision records awaiting Josh's confirmation:** DR-0024 (slot finality, amending DR-0022) and DR-0025 (exact Decimal arithmetic and strict inputs).
+**New decision records:** DR-0024 (slot finality, amending DR-0022) and DR-0025 (exact Decimal arithmetic and strict inputs), both **accepted** by Josh on 2026-11-08.
 
 **Pattern behind the bugs:** F02 and F06 existed because the replay and prospective builders kept *separate* copies of the error-handling logic, and only one had been fixed after the first live run. Both builders now share one per-read guard (`_read`) and one assembly step (`_assemble`).
 
