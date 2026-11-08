@@ -296,3 +296,19 @@ def test_failed_underlying_read_keeps_options_and_notes_once() -> None:
     s = replay(NoUnderlying(fixture_source().records()))
     assert len(s.option_quotes) == 3 and s.underlying_quotes == ()
     assert [n.code for n in s.quality_notes] == ["UNDERLYING_QUOTE:RuntimeError"]
+
+
+def test_prospective_window() -> None:
+    from remy_finance.snapshots.schedule import OutsideWindowError, prospective_window
+
+    start, end = prospective_window(
+        datetime(2026, 11, 9, 15, 2, tzinfo=UTC), Session.OPEN
+    )  # Mon 10:02 ET
+    assert start == datetime(2026, 11, 9, 15, 0, tzinfo=UTC) and end == start + timedelta(
+        minutes=10
+    )
+    with pytest.raises(
+        OutsideWindowError,
+        match=r"Sun 2026-11-08 is not a trading session.*Mon 2026-11-09 at 10:00 ET",
+    ):
+        prospective_window(datetime(2026, 11, 8, 15, 30, tzinfo=UTC), Session.OPEN)

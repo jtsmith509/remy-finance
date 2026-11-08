@@ -75,3 +75,24 @@ def test_rerun_resumes_instead_of_failing(tmp_path: Path, monkeypatch: pytest.Mo
     )
     assert again.exit_code == 0, again.output
     assert again.output.count("already stored") == 2
+
+
+def test_take_on_a_weekend_exits_cleanly_without_fetching(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import datetime as dt
+
+    class Sunday(dt.datetime):
+        @classmethod
+        def now(cls, tz: dt.tzinfo | None = None) -> dt.datetime:  # type: ignore[override]
+            return dt.datetime(2026, 11, 8, 15, 30, tzinfo=dt.UTC)
+
+    monkeypatch.setenv("REMY_DATA_DIR", str(tmp_path))
+    monkeypatch.setattr(cli, "datetime", Sunday)
+    monkeypatch.setattr(
+        cli, "_sources", lambda no_events: pytest.fail("must not fetch outside the window")
+    )
+    result = CliRunner().invoke(
+        cli.app, ["snapshot", "take", "--session", "open", "--symbols", "XYZ"]
+    )
+    assert result.exit_code == 2 and "not a trading session" in result.output

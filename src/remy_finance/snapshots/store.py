@@ -41,7 +41,12 @@ from remy_finance.core import (
 from remy_finance.core.canonical import canonical_datetime, canonical_decimal
 from remy_finance.core.types import UtcDatetime
 from remy_finance.data.timeutil import et_date
-from remy_finance.snapshots.schedule import SNAPTIMES_1, SnapshotKind, snapshot_time
+from remy_finance.snapshots.schedule import (
+    PROSPECTIVE_MAX_DELAY,
+    SNAPTIMES_1,
+    SnapshotKind,
+    snapshot_time,
+)
 
 STORE_VERSION = "SNAPSTORE-1"
 
@@ -254,7 +259,7 @@ class SnapshotStore:
         *,
         kind: SnapshotKind = SnapshotKind.DECISION,
         decision_snapshot_id: str | None = None,
-        max_delay: timedelta = timedelta(minutes=10),
+        max_delay: timedelta = PROSPECTIVE_MAX_DELAY,
         now: datetime | None = None,
     ) -> SnapshotManifest:
         session_date = et_date(state.as_of)

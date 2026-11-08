@@ -8,7 +8,7 @@ from enum import StrEnum
 from pydantic import Field
 
 from remy_finance.core import Record, Session
-from remy_finance.data.timeutil import NEW_YORK, xnys
+from remy_finance.data.timeutil import NEW_YORK, et_date, next_session, xnys
 
 
 class SnapshotKind(StrEnum):
@@ -60,3 +60,31 @@ def snapshot_time(
     if kind is SnapshotKind.EXECUTION:
         local += timedelta(minutes=schedule.execution_offset_minutes)
     return local.astimezone(UTC)
+
+
+PROSPECTIVE_MAX_DELAY = timedelta(minutes=10)  # DR-0022: later than this, the slot is a gap
+
+
+class OutsideWindowError(ValueError):
+    pass
+
+
+def prospective_window(
+    now: datetime,
+    session: Session,
+    kind: SnapshotKind = SnapshotKind.DECISION,
+    max_delay: timedelta = PROSPECTIVE_MAX_DELAY,
+) -> tuple[datetime, datetime]:
+    """The [start, end] UTC window in which a prospective snapshot may be taken today.
+
+    Raises OutsideWindowError with a readable reason if today is not a trading session."""
+    d = et_date(now)
+    if not is_session(d):
+        nxt = next_session(d)
+        start = snapshot_time(nxt, session, kind).astimezone(NEW_YORK)
+        raise OutsideWindowError(
+            f"{d:%a %Y-%m-%d} is not a trading session; the next {session.value} snapshot "
+            f"is {nxt:%a %Y-%m-%d} at {start:%H:%M} ET"
+        )
+    start = snapshot_time(d, session, kind)
+    return start, start + max_delay

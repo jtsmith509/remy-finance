@@ -175,16 +175,41 @@ def snapshot_take(
     movegen: Annotated[
         bool, typer.Option(help="Also run the move generator and report counts/timing")
     ] = False,
+    wait: Annotated[
+        bool, typer.Option(help="If started early (up to 3 h), wait for the scheduled time")
+    ] = False,
 ) -> None:
-    """Take and store a live PROSPECTIVE snapshot (run at the scheduled time)."""
-    from datetime import UTC
+    """Take and store a live PROSPECTIVE snapshot within 10 minutes of its scheduled time."""
+    from datetime import UTC, timedelta
 
-    from remy_finance.data.timeutil import et_date
+    from remy_finance.data.timeutil import NEW_YORK, et_date
     from remy_finance.snapshots.builder import build_prospective
-    from remy_finance.snapshots.schedule import SnapshotKind, snapshot_time
+    from remy_finance.snapshots.schedule import (
+        OutsideWindowError,
+        SnapshotKind,
+        prospective_window,
+        snapshot_time,
+    )
     from remy_finance.snapshots.store import SnapshotStore
 
     sess = _session(session)
+    now = datetime.now(UTC)
+    try:
+        start, end = prospective_window(now, sess)
+    except OutsideWindowError as e:
+        typer.echo(f"not taking a snapshot: {e}")
+        raise typer.Exit(2) from None
+    window = f"{start.astimezone(NEW_YORK):%H:%M}-{end.astimezone(NEW_YORK):%H:%M} ET"
+    if now > end:
+        typer.echo(f"not taking a snapshot: too late, the {sess.value} window today was {window}")
+        raise typer.Exit(2)
+    if now < start:
+        delay = (start - now).total_seconds()
+        if not wait or delay > timedelta(hours=3).total_seconds():
+            typer.echo(f"not taking a snapshot: too early, the window is {window} (use --wait)")
+            raise typer.Exit(2)
+        typer.echo(f"waiting {delay / 60:.1f} min for the {window} window")
+        time.sleep(delay)
     syms, universe_version = _symbols(symbols, et_date(datetime.now(UTC)))
     theta, source = _sources(no_events)
     store = SnapshotStore(_data_dir() / "snapshots")
@@ -197,12 +222,12 @@ def snapshot_take(
     )
     for kind in kinds:
         if kind is SnapshotKind.EXECUTION:
-            wait = (
+            exec_delay = (
                 snapshot_time(et_date(datetime.now(UTC)), sess, kind) - datetime.now(UTC)
             ).total_seconds()
-            if wait > 0:
-                typer.echo(f"waiting {wait:.0f}s for the execution snapshot")
-                time.sleep(wait)
+            if exec_delay > 0:
+                typer.echo(f"waiting {exec_delay:.0f}s for the execution snapshot")
+                time.sleep(exec_delay)
         state = build_prospective(
             theta,
             source,
