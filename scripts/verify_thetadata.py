@@ -223,25 +223,34 @@ def size_stats(rows: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
-def staleness(rows: list[dict[str, Any]], tod: str) -> dict[str, Any]:
-    """Distribution of (requested time - quote timestamp) in seconds, per row."""
-    hh, mm, ss = tod.split(":")
-    target_s = int(hh) * 3600 + int(mm) * 60 + float(ss)
+def at(d: date, tod: str) -> datetime:
+    """Naive ET wall-clock datetime for session date `d` at `HH:MM:SS.SSS`."""
+    return datetime.combine(d, datetime.strptime(tod, "%H:%M:%S.%f").time())  # noqa: DTZ007
+
+
+def staleness(rows: list[dict[str, Any]], target: datetime) -> dict[str, Any]:
+    """Distribution of (target - quote timestamp) in seconds, comparing full ET datetimes.
+
+    ThetaData timestamps are naive ET wall-clock strings, so `target` is naive ET too.
+    Any row stamped after `target` is a look-ahead defect.
+    """
     ages: list[float] = []
-    future = 0
+    future: list[str] = []
     dates: set[str] = set()
+    unparsed = 0
     for r in rows:
         ts = parse_ts(r.get("timestamp"))
         if ts is None:
+            unparsed += 1
             continue
+        ts = ts.replace(tzinfo=None)
         dates.add(ts.date().isoformat())
-        sec = ts.hour * 3600 + ts.minute * 60 + ts.second + ts.microsecond / 1e6
-        age = target_s - sec
-        if age < -0.001:
-            future += 1
+        age = (target - ts).total_seconds()
+        if age < 0:
+            future.append(str(r.get("timestamp")))
         ages.append(age)
     if not ages:
-        return {"parsed": 0}
+        return {"parsed": 0, "unparsed": unparsed}
     ages.sort()
 
     def q(p: float) -> float:
@@ -249,13 +258,31 @@ def staleness(rows: list[dict[str, Any]], tod: str) -> dict[str, Any]:
 
     return {
         "parsed": len(ages),
+        "unparsed": unparsed,
         "distinct_dates": sorted(dates),
-        "rows_stamped_after_requested_time": future,
+        "rows_stamped_after_requested_time": len(future),
+        "examples_after": future[:3],
         "age_s_p50": q(0.5),
         "age_s_p90": q(0.9),
         "age_s_p99": q(0.99),
         "age_s_max": round(ages[-1], 3),
+        "older_than_60s": sum(a > 60 for a in ages),
+        "older_than_1h": sum(a > 3600 for a in ages),
+        "from_prior_day": sum(1 for d in dates if d < target.date().isoformat()),
     }
+
+
+def dte_split(rows: list[dict[str, Any]], d: date, max_dte: int = MAX_DTE) -> dict[str, int]:
+    within = beyond = 0
+    for r in rows:
+        e = str(r.get("expiration", "")).replace("-", "")
+        if len(e) == 8 and e.isdigit():
+            dte = (datetime.strptime(e, "%Y%m%d").date() - d).days  # noqa: DTZ007
+            if dte <= max_dte:
+                within += 1
+            else:
+                beyond += 1
+    return {"rows_le_max_dte": within, "rows_gt_max_dte": beyond}
 
 
 def parquet_bytes(rows: list[dict[str, Any]]) -> int | None:
@@ -452,31 +479,56 @@ def check_dividends(t: Theta, syms: list[str], d: date) -> Check:
 def check_time_of_day(t: Theta, syms: list[str], days: list[date]) -> Check:
     c = Check("4", "Time-of-day full-chain NBBO across a date range")
     ok = True
+    max_dte_ignored = False
+    total_s = 0.0
+    n_req = 0
     for s in syms[:2]:
-        for tod in SNAP_TIMES + EXEC_TIMES[:1]:
-            r = t.get(
-                "/v3/option/at_time/quote",
-                symbol=s,
-                expiration="*",
-                start_date=ymd(days[0]),
-                end_date=ymd(days[-1]),
-                time_of_day=tod,
-                max_dte=MAX_DTE,
-            )
-            stl = staleness(r.rows, tod)
-            c.evidence.append({"symbol": s, "time_of_day": tod, **r.brief(), "staleness": stl})
-            ok &= (
-                r.ok
-                and len(r.rows) > 0
-                and stl.get("rows_stamped_after_requested_time", 1) == 0
-                and len(stl.get("distinct_dates", [])) == len(days)
-            )
+        for tod in SNAP_TIMES + EXEC_TIMES:
+            per_day: list[dict[str, Any]] = []
+            for d in days:
+                # With expiration='*', v3 requires start_date == end_date: one request per day.
+                r = t.get(
+                    "/v3/option/at_time/quote",
+                    symbol=s,
+                    expiration="*",
+                    start_date=ymd(d),
+                    end_date=ymd(d),
+                    time_of_day=tod,
+                    max_dte=MAX_DTE,
+                )
+                total_s += r.elapsed_s
+                n_req += 1
+                stl = staleness(r.rows, at(d, tod))
+                split = dte_split(r.rows, d)
+                max_dte_ignored |= split["rows_gt_max_dte"] > 0
+                per_day.append(
+                    {
+                        "date": d.isoformat(),
+                        "status": r.status,
+                        "error": r.error,
+                        "rows": len(r.rows),
+                        "elapsed_s": round(r.elapsed_s, 3),
+                        **split,
+                        "staleness": stl,
+                    }
+                )
+                ok &= (
+                    r.ok
+                    and len(r.rows) > 0
+                    and stl.get("rows_stamped_after_requested_time", 1) == 0
+                )
+            c.evidence.append({"symbol": s, "time_of_day": tod, "per_day": per_day})
     c.status = PASS if ok else FAIL
     c.summary = (
-        f"One request per (symbol, time) returned the chain for all {len(days)} sessions "
-        "with no quote stamped after the requested time."
+        f"{n_req} single-day requests ({len(days)} sessions x {len(syms[:2])} symbols x 4 times) "
+        f"all returned the chain with no quote stamped after the requested time; "
+        f"mean {total_s / max(n_req, 1):.1f} s per request."
         if ok
-        else "Range retrieval failed or returned rows after the requested time; see evidence."
+        else "At least one request failed or returned rows after the requested time; see evidence."
+    )
+    c.notes.append("v3 rejects date ranges when expiration='*': one request per day is required.")
+    c.notes.append(
+        f"max_dte ignored by at_time/quote (rows beyond {MAX_DTE} DTE): {max_dte_ignored}."
     )
     c.notes.append("Any row stamped after the requested time would be a look-ahead defect.")
     return c
@@ -545,7 +597,7 @@ def check_expired(t: Theta, syms: list[str], today: date) -> Check:
 def check_rates_index(t: Theta, d: date) -> Check:
     c = Check("X1", "Interest rates and index EOD (FREE tiers)")
     got_rate = False
-    for path in ("/v3/rate/history/eod", "/v3/interest_rate/history/eod"):
+    for path in ("/v3/interest_rate/history/eod", "/v3/rate/history/eod"):
         for sym in ("SOFR", "TREASURY_M3"):
             r = t.get(path, symbol=sym, start_date=ymd(d - timedelta(days=14)), end_date=ymd(d))
             c.evidence.append(r.brief())
@@ -607,41 +659,53 @@ def check_concurrency(t: Theta, syms: list[str], d: date) -> Check:
 @guarded
 def check_storage(t: Theta, syms: list[str], d: date) -> Check:
     c = Check("X3", "Storage per snapshot (Parquet, zstd)")
-    per: list[int] = []
+    full: list[int] = []
+    le60: list[int] = []
     for s in syms:
-        for label, extra in (("max_dte=60", {"max_dte": MAX_DTE}), ("all expirations", {})):
-            r = t.get(
-                "/v3/option/at_time/quote",
-                symbol=s,
-                expiration="*",
-                start_date=ymd(d),
-                end_date=ymd(d),
-                time_of_day=SNAP_TIMES[0],
-                **extra,
-            )
-            pb = parquet_bytes(r.rows)
-            c.evidence.append(
-                {
-                    "symbol": s,
-                    "scope": label,
-                    "rows": len(r.rows),
-                    "json_bytes": r.n_bytes,
-                    "parquet_bytes": pb,
-                    "status": r.status,
-                }
-            )
-            if label == "max_dte=60" and pb:
-                per.append(pb)
-    if per:
-        mean = statistics.mean(per)
-        snap = mean * UNIVERSE_SIZE
-        daily = snap * 4  # 2 snapshots + 2 execution quotes (DR-0003)
-        c.status = PASS
-        c.summary = (
-            f"Mean {mean / 1e3:.0f} kB per underlying (≤60 DTE); est. "
-            f"{snap / 1e6:.1f} MB per 50-name snapshot, {daily / 1e6:.1f} MB/day, "
-            f"{daily * 252 / 1e9:.2f} GB/year (option quotes only)."
+        r = t.get(
+            "/v3/option/at_time/quote",
+            symbol=s,
+            expiration="*",
+            start_date=ymd(d),
+            end_date=ymd(d),
+            time_of_day=SNAP_TIMES[0],
         )
+        cutoff = d + timedelta(days=MAX_DTE)
+        sub = [
+            row
+            for row in r.rows
+            if (e := parse_ts(str(row.get("expiration", "")) + "T00:00:00")) and e.date() <= cutoff
+        ]
+        pb_full, pb_60 = parquet_bytes(r.rows), parquet_bytes(sub)
+        c.evidence.append(
+            {
+                "symbol": s,
+                "status": r.status,
+                "rows_all": len(r.rows),
+                "rows_le_60dte": len(sub),
+                "json_bytes": r.n_bytes,
+                "parquet_bytes_all": pb_full,
+                "parquet_bytes_le_60dte": pb_60,
+            }
+        )
+        if pb_full:
+            full.append(pb_full)
+        if pb_60:
+            le60.append(pb_60)
+    if full:
+        parts = []
+        for label, xs in (("all expirations", full), ("<=60 DTE", le60)):
+            if not xs:
+                continue
+            mean = statistics.mean(xs)
+            daily = mean * UNIVERSE_SIZE * 4  # 2 snapshots + 2 execution quotes (DR-0003)
+            parts.append(
+                f"{label}: {mean / 1e3:.0f} kB/underlying, "
+                f"{mean * UNIVERSE_SIZE / 1e6:.1f} MB/snapshot, "
+                f"{daily / 1e6:.1f} MB/day, {daily * 252 / 1e9:.2f} GB/year"
+            )
+        c.status = PASS
+        c.summary = "; ".join(parts) + " (option quotes only)."
         c.notes.append(
             "Sample names skew large (SPY has the biggest chain); a 50-name mean is lower."
         )
@@ -696,6 +760,7 @@ def main(argv: list[str] | None = None) -> int:
         "--out", default=os.path.join(os.environ.get("REMY_DATA_DIR", "data"), "verification")
     )
     ap.add_argument("--skip", default="", help="Comma-separated check ids to skip, e.g. X2,X3")
+    ap.add_argument("--only", default="", help="Comma-separated check ids to run, e.g. 4,X3")
     a = ap.parse_args(argv)
 
     today = datetime.now(UTC).date()
@@ -703,6 +768,7 @@ def main(argv: list[str] | None = None) -> int:
     days = trading_days(ref, a.range_days)
     syms = [s.strip().upper() for s in a.symbols.split(",") if s.strip()]
     skip = {s.strip() for s in a.skip.split(",") if s.strip()}
+    only = {s.strip() for s in a.only.split(",") if s.strip()}
     t = Theta(a.url)
 
     meta = {
@@ -730,8 +796,8 @@ def main(argv: list[str] | None = None) -> int:
         ("X3", lambda: check_storage(t, syms, ref)),
     ]
     for cid, fn in plan:
-        if cid in skip:
-            checks.append(Check(cid, cid, SKIP, "skipped by --skip"))
+        if cid in skip or (only and cid not in only):
+            checks.append(Check(cid, cid, SKIP, "skipped by --skip/--only"))
             continue
         print(f"running check {cid} ...", file=sys.stderr)
         checks.append(fn())

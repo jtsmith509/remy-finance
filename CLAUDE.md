@@ -30,5 +30,5 @@ If the brief and the spec disagree, **stop and ask Josh**. Don't resolve it your
 
 ## Status
 
-- Current stage: **R0.1 done; waiting at Stop Point A.** See `docs/memos/R0.1-data-verification.md`.
+- Current stage: **R0.1 live-verified (check 4 rerun pending); waiting at Stop Point A.** See `docs/memos/R0.1-data-verification.md`.
 - DR-0001 to DR-0012 (handoff defaults D1–D12) are **proposed**.

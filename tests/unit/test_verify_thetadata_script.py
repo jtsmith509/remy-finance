@@ -69,8 +69,12 @@ def _handler(request: httpx.Request) -> httpx.Response:
             },
         )
     if p == "/v3/option/at_time/quote":
-        tod = q["time_of_day"][:8]
-        return httpx.Response(200, json=_chain(f"{q['start_date'][:4]}-11-06T{tod}"))
+        if q["expiration"] == "*" and q["start_date"] != q["end_date"]:
+            return httpx.Response(
+                400, text="If expiration='*', then start and end must be the same"
+            )
+        sd = q["start_date"]
+        return httpx.Response(200, json=_chain(f"{sd[:4]}-{sd[4:6]}-{sd[6:]}T{q['time_of_day']}"))
     if p == "/v3/option/snapshot/quote":
         return httpx.Response(200, json=_chain("2026-11-06T15:59:59.5"))
     if p == "/v3/stock/at_time/quote":
@@ -113,8 +117,22 @@ def test_flatten_nested_and_flat() -> None:
 
 def test_staleness_flags_rows_after_requested_time() -> None:
     rows = [_quote(1, "2026-11-06T09:59:58"), _quote(2, "2026-11-06T10:00:01")]
-    st = vt.staleness(rows, "10:00:00.000")
+    st = vt.staleness(rows, vt.at(D, "10:00:00.000"))
     assert st["rows_stamped_after_requested_time"] == 1
+
+
+def test_staleness_compares_dates_not_just_clock_time() -> None:
+    later_day = _quote(1, "2026-11-07T09:00:00")  # earlier clock time, but a later date
+    prior_day = _quote(2, "2026-11-05T15:59:00")  # later clock time, but an earlier date
+    st = vt.staleness([later_day, prior_day], vt.at(D, "10:00:00.000"))
+    assert st["rows_stamped_after_requested_time"] == 1
+    assert st["examples_after"] == ["2026-11-07T09:00:00"]
+    assert st["from_prior_day"] == 1
+
+
+def test_dte_split_detects_ignored_max_dte() -> None:
+    rows = [{"expiration": "2026-11-20"}, {"expiration": "2029-01-19"}]
+    assert vt.dte_split(rows, D) == {"rows_le_max_dte": 1, "rows_gt_max_dte": 1}
 
 
 def test_size_stats_counts_positive_sizes() -> None:
@@ -131,7 +149,9 @@ def test_checks_against_mock_terminal() -> None:
     und = vt.check_underlying(t, ["SPY"], D)
     assert und.status == vt.PARTIAL  # no stock NBBO (403), but greeks underlying_price
     assert vt.check_dividends(t, ["SPY"], D).status == vt.FAIL
-    assert vt.check_time_of_day(t, ["SPY"], [D]).status == vt.PASS
+    tod = vt.check_time_of_day(t, ["SPY"], [date(2026, 11, 5), D])
+    assert tod.status == vt.PASS, tod.evidence
+    assert vt.check_storage(t, ["SPY"], D).status == vt.PASS
 
 
 def test_unreachable_terminal_reports_fail() -> None:
