@@ -9,7 +9,10 @@ plus ONE_SIDED, CROSSED and ZERO_SIZE.
 
 from __future__ import annotations
 
+import time
 from collections.abc import Callable, Sequence
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from typing import Protocol
 
@@ -77,6 +80,18 @@ def _note(scope: str, err: Exception) -> QualityNote:
     return QualityNote(scope=scope, code=type(err).__name__, detail=str(err)[:300])
 
 
+@dataclass(frozen=True)
+class _SymbolData:
+    chain: tuple[OptionQuote, ...]
+    underlying: UnderlyingQuote | None
+    dividends: tuple[DividendEvent, ...]
+    actions: tuple[CorporateAction, ...]
+
+
+SymbolProgress = Callable[[str, int, int, int, float], None]
+"""progress(symbol, done, total, n_option_quotes, seconds_for_symbol)"""
+
+
 def build_from_view(
     source: MarketDataSource,
     *,
@@ -87,32 +102,65 @@ def build_from_view(
     underlyings: Sequence[str],
     provenance: Sequence[Provenance] = (),
     rule: QuoteAgeRule = QAGE_1,
+    max_workers: int = 4,
+    progress: SymbolProgress | None = None,
 ) -> MarketState:
-    """Build a board by reading every input through ``PointInTimeView(source, as_of)``."""
+    """Build a board by reading every input through ``PointInTimeView(source, as_of)``.
+
+    Symbols are fetched ``max_workers`` at a time; the board does not depend on it."""
     view = PointInTimeView(source, as_of)
+    symbols = sorted(set(underlyings))
+
+    def fetch(sym: str) -> tuple[str, _SymbolData | Exception, float]:
+        t0 = time.perf_counter()
+        out: _SymbolData | Exception
+        try:
+            out = _SymbolData(
+                chain=view.chain_quotes(sym),
+                underlying=view.underlying_quote(sym),
+                dividends=view.dividends(sym),
+                actions=view.corporate_actions(sym),
+            )
+        except LookaheadError:
+            raise
+        except Exception as e:  # a vendor/data problem for one symbol is a gap, not a crash
+            out = e
+        return sym, out, time.perf_counter() - t0
+
+    results: dict[str, _SymbolData | Exception] = {}
+    with ThreadPoolExecutor(max_workers=max(1, max_workers)) as pool:
+        futures = [pool.submit(fetch, sym) for sym in symbols]
+        try:
+            for fut in as_completed(futures):
+                sym, out, secs = fut.result()  # re-raises LookaheadError
+                results[sym] = out
+                if progress is not None:
+                    n = 0 if isinstance(out, Exception) else len(out.chain)
+                    progress(sym, len(results), len(symbols), n, secs)
+        except BaseException:
+            for f in futures:
+                f.cancel()
+            raise
+
     options: list[OptionQuote] = []
     unders: list[UnderlyingQuote] = []
     divs: list[DividendEvent] = []
     acts: list[CorporateAction] = []
     notes: list[QualityNote] = []
-    for sym in sorted(set(underlyings)):
-        try:
-            chain = view.chain_quotes(sym)
-            uq = view.underlying_quote(sym)
-            divs.extend(view.dividends(sym))
-            acts.extend(view.corporate_actions(sym))
-        except LookaheadError:
-            raise
-        except Exception as e:  # a vendor/data problem for one symbol is a gap, not a crash
-            notes.append(_note(sym, e))
+    for sym in symbols:  # fixed order: the board is independent of completion order
+        out = results[sym]
+        if isinstance(out, Exception):
+            notes.append(_note(sym, out))
             continue
-        if not chain:
+        divs.extend(out.dividends)
+        acts.extend(out.actions)
+        if not out.chain:
             notes.append(QualityNote(scope=sym, code="NO_OPTION_QUOTES"))
-        if uq is None:
+        if out.underlying is None:
             notes.append(QualityNote(scope=sym, code="NO_UNDERLYING_QUOTE"))
         else:
-            unders.append(flag_underlying_quote(uq, as_of, rule))
-        options.extend(flag_option_quote(q, as_of, rule) for q in chain)
+            unders.append(flag_underlying_quote(out.underlying, as_of, rule))
+        options.extend(flag_option_quote(q, as_of, rule) for q in out.chain)
     try:
         rates = list(view.rates())
     except LookaheadError:
@@ -148,6 +196,8 @@ def build_replay(
     universe_version: str,
     underlyings: Sequence[str],
     provenance: Sequence[Provenance] = (),
+    max_workers: int = 4,
+    progress: SymbolProgress | None = None,
 ) -> MarketState:
     return build_from_view(
         source,
@@ -157,6 +207,8 @@ def build_replay(
         universe_version=universe_version,
         underlyings=underlyings,
         provenance=provenance,
+        max_workers=max_workers,
+        progress=progress,
     )
 
 

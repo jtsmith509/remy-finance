@@ -248,3 +248,25 @@ def test_gap_cannot_replace_an_existing_snapshot(tmp_path: Path) -> None:
     assert (
         store.find(Mode.REPLAY, DAY, Session.OPEN, SnapshotKind.DECISION) is None
     )  # trees are separate
+
+
+def test_board_independent_of_workers_and_progress_reported() -> None:
+    seen: list[str] = []
+    one = build_replay(
+        fixture_source(),
+        DAY,
+        Session.OPEN,
+        universe_version="U-T",
+        underlyings=("XYZ", "ABC"),
+        max_workers=1,
+    )
+    four = build_replay(
+        fixture_source(),
+        DAY,
+        Session.OPEN,
+        universe_version="U-T",
+        underlyings=("XYZ", "ABC"),
+        max_workers=4,
+        progress=lambda sym, done, total, n, secs: seen.append(sym),
+    )
+    assert one.snapshot_id == four.snapshot_id and sorted(seen) == ["ABC", "XYZ"]

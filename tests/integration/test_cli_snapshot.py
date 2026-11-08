@@ -66,3 +66,12 @@ def test_build_without_symbols_or_universe_fails_clearly(
         cli.app, ["snapshot", "build", "--date", DAY.isoformat(), "--session", "open"]
     )
     assert result.exit_code != 0 and "no stored universe" in result.output
+
+
+def test_rerun_resumes_instead_of_failing(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    test_build_without_symbols_uses_universe(tmp_path, monkeypatch)
+    again = CliRunner().invoke(
+        cli.app, ["snapshot", "build", "--date", DAY.isoformat(), "--session", "open"]
+    )
+    assert again.exit_code == 0, again.output
+    assert again.output.count("already stored") == 2

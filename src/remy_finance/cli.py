@@ -99,8 +99,13 @@ def snapshot_build(
     movegen: Annotated[
         bool, typer.Option(help="Also run the move generator and report counts/timing")
     ] = False,
+    workers: Annotated[
+        int, typer.Option(help="Symbols fetched concurrently (ThetaData Standard: 4)")
+    ] = 4,
 ) -> None:
-    """Build and store REPLAY decision + execution snapshots for a historical session."""
+    """Build and store REPLAY decision + execution snapshots for a historical session.
+
+    Safe to re-run: snapshots already stored for the slot are reused, never rebuilt."""
     from remy_finance.snapshots.builder import build_replay
     from remy_finance.snapshots.schedule import SnapshotKind
     from remy_finance.snapshots.store import SnapshotStore
@@ -112,7 +117,26 @@ def snapshot_build(
     prov = (Provenance(source="cli", details=(("command", "snapshot build"),)),)
     decision_id: str | None = None
     for kind in (SnapshotKind.DECISION, SnapshotKind.EXECUTION):
+        existing = store.find(Mode.REPLAY, d, sess, kind)
+        if existing is not None:  # resume: a stored snapshot is final, never rebuilt
+            m = store.load_manifest(existing)
+            typer.echo(f"{kind.value}: already stored {m.snapshot_id[:16]} ({existing}); skipping")
+            if kind is SnapshotKind.DECISION:
+                decision_id = m.snapshot_id
+                if movegen:
+                    _report_movegen(store.load(existing))
+            continue
+        typer.echo(f"{kind.value}: building {len(syms)} symbols with {workers} workers ...")
         t0 = time.perf_counter()
+
+        def progress(sym: str, done: int, total: int, n: int, secs: float, t0: float = t0) -> None:
+            elapsed = time.perf_counter() - t0
+            eta = elapsed / done * (total - done)
+            typer.echo(
+                f"  [{done:>2}/{total}] {sym:<6} {n:>6} quotes {secs:5.1f}s  "
+                f"elapsed {elapsed / 60:4.1f}m  eta {eta / 60:4.1f}m"
+            )
+
         state = build_replay(
             source,
             d,
@@ -121,13 +145,14 @@ def snapshot_build(
             universe_version=universe_version,
             underlyings=syms,
             provenance=prov,
+            max_workers=workers,
+            progress=progress,
         )
         built = time.perf_counter() - t0
         m = store.write(state, kind=kind, decision_snapshot_id=decision_id)
         typer.echo(
             f"{kind.value}: {m.snapshot_id[:16]} as_of {m.as_of.isoformat()} "
-            f"quotes {m.n_option_quotes} "
-            f"notes {m.n_quality_notes} (built in {built:.1f}s)"
+            f"quotes {m.n_option_quotes} notes {m.n_quality_notes} (built in {built:.1f}s)"
         )
         for n in state.quality_notes:
             typer.echo(f"  note: {n.scope} {n.code} {n.detail[:120]}")
