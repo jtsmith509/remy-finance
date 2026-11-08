@@ -41,6 +41,7 @@ from remy_finance.execution.settlement import settle_at_expiration
 from remy_finance.snapshots.builder import build_prospective, build_replay
 from remy_finance.snapshots.schedule import SnapshotKind
 from remy_finance.snapshots.store import GapRecordedError, SnapshotExistsError, SnapshotStore
+from remy_finance.universe.selection import UniverseDecision
 from tests import factories as f
 from tests.factories import EXP, bull_call_spread, leg
 
@@ -325,3 +326,70 @@ def test_f01_interrupted_gap_write_leaves_no_gap(
     assert not list(tmp_path.rglob("*.partial"))
     store.record_gap(DAY, Session.OPEN, SnapshotKind.DECISION, "late")  # retry works
     assert store.has_gap(DAY, Session.OPEN, SnapshotKind.DECISION)
+
+
+# -------------------------------- F07: atomic universe writes; F08: fixture types
+
+
+def _decision() -> UniverseDecision:
+    return UniverseDecision(
+        rule_version="UNIV-1",
+        candidate_list_version="T",
+        selection_session=DAY,
+        as_of=f.AS_OF,
+        window_start=DAY,
+        window_end=DAY,
+        scores=(),
+        members=("XYZ",),
+        inputs_hash="0" * 64,
+    )
+
+
+def test_f07_interrupted_universe_write_does_not_poison_final_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import os
+
+    from remy_finance.universe.selection import UniverseStore
+
+    store = UniverseStore(tmp_path)
+
+    def boom(fd: int) -> None:
+        raise OSError("interrupted")
+
+    monkeypatch.setattr(os, "fsync", boom)  # the write must be durable before it is published
+    with pytest.raises(OSError):
+        store.write(_decision())
+    monkeypatch.undo()
+    assert not (tmp_path / "UNIV-1" / f"{DAY}.json").exists()
+    assert not list(tmp_path.rglob("*.partial"))
+    assert store.decisions() == []  # readers are not broken
+    store.write(_decision())  # retry succeeds
+    assert store.membership_for(DAY) == _decision()
+
+
+def test_f07_existing_decision_is_never_replaced(tmp_path: Path) -> None:
+    from remy_finance.universe.selection import UniverseStore
+
+    store = UniverseStore(tmp_path)
+    path = store.write(_decision())
+    before = path.read_text()
+    with pytest.raises(FileExistsError):
+        store.write(_decision())
+    assert path.read_text() == before
+
+
+def test_f08_file_fixture_round_trip_includes_option_volume(tmp_path: Path) -> None:
+    from remy_finance.core import OptionVolume
+    from remy_finance.data import PointInTimeView
+    from remy_finance.data.timeutil import et_at
+
+    d = date(2026, 11, 5)
+    t = et_at(d, 17, 15)
+    vol = OptionVolume(
+        symbol="XYZ", session_date=d, contracts=1234, event_time=t, public_time=t, source="fx"
+    )
+    path = tmp_path / "fixture.jsonl"
+    FixtureSource([vol]).dump(path)
+    reloaded = FixtureSource.load(path)
+    assert PointInTimeView(reloaded, f.AS_OF).option_volume("XYZ", d) == vol

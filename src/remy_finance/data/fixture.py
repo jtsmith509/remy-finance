@@ -36,6 +36,7 @@ _TYPES: dict[str, type[Record]] = {
         DividendEvent,
         CorporateAction,
         RatePoint,
+        OptionVolume,
     )
 }
 

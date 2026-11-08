@@ -46,6 +46,7 @@ from remy_finance.core import (
 from remy_finance.core.canonical import canonical_datetime, canonical_decimal
 from remy_finance.core.types import UtcDatetime
 from remy_finance.data.timeutil import et_date
+from remy_finance.fileio import publish_file
 from remy_finance.snapshots.schedule import (
     PROSPECTIVE_MAX_DELAY,
     SNAPTIMES_1,
@@ -97,23 +98,6 @@ class GapRecord(Record):
     kind: SnapshotKind
     reason: str = Field(min_length=1)
     recorded_at: UtcDatetime
-
-
-def _publish_file(path: Path, text: str) -> None:
-    """Write ``text`` to ``path`` atomically and never overwrite: temp file + fsync, then a
-    hard link (which fails if ``path`` exists), then remove the temp name."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    fd, tmp_name = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".partial", dir=path.parent)
-    tmp = Path(tmp_name)
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as fh:
-            fh.write(text)
-            fh.flush()
-            os.fsync(fh.fileno())
-        tmp.chmod(0o444)
-        os.link(tmp, path)
-    finally:
-        tmp.unlink(missing_ok=True)
 
 
 def _sha256(path: Path) -> str:
@@ -287,7 +271,7 @@ class SnapshotStore:
                 reason=reason,
                 recorded_at=now or datetime.now(UTC),
             )
-            _publish_file(path, gap.canonical_json())
+            publish_file(path, gap.canonical_json())
             return gap
 
     # ------------------------------------------------------------------ write

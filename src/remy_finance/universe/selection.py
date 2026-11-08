@@ -24,6 +24,7 @@ from remy_finance.core.types import NonNegDec, UtcDatetime
 from remy_finance.data.protocol import MarketDataSource
 from remy_finance.data.timeutil import et_at, xnys
 from remy_finance.data.view import PointInTimeView
+from remy_finance.fileio import publish_file
 from remy_finance.universe.candidates import UNIV_CANDIDATES_1, UNIV_CANDIDATES_1_VERSION
 
 
@@ -181,13 +182,12 @@ class UniverseStore:
         self.root = Path(root)
 
     def write(self, decision: UniverseDecision) -> Path:
+        """Publish atomically and write-once: readers see a complete decision or none, an
+        interrupted write leaves nothing behind, and an existing decision is never replaced."""
         path = self.root / decision.rule_version / f"{decision.selection_session.isoformat()}.json"
         if path.exists():
             raise FileExistsError(f"universe decision already stored: {path}")
-        path.parent.mkdir(parents=True, exist_ok=True)
-        with path.open("x", encoding="utf-8") as fh:
-            fh.write(decision.canonical_json())
-        path.chmod(0o444)
+        publish_file(path, decision.canonical_json())  # raises FileExistsError on a race
         return path
 
     def decisions(self, rule_version: str = UNIV_1.version) -> list[UniverseDecision]:
