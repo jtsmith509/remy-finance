@@ -21,5 +21,6 @@
 | [DR-0017](DR-0017-time-model.md) | Time model and the board's look-ahead invariant | R0.2 | proposed |
 | [DR-0018](DR-0018-payoff-conventions.md) | Payoff and capital-at-risk conventions; priced structures | R0.6 | proposed |
 | [DR-0019](DR-0019-assign-1-details.md) | ASSIGN-1 implementation details | R0.9 | proposed |
+| [DR-0020](DR-0020-movegen-lattice.md) | Move-generator strike lattice and enumeration details | R0.7 | proposed |
 
 Each record has these sections: context, options considered, decision, consequences. Status stays *proposed* until Josh confirms it. A confirmed DR is superseded only by a new, linked DR; it is never edited in place.
