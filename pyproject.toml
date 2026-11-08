@@ -36,6 +36,10 @@ packages = ["src/remy_finance"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-ra --strict-markers"
+filterwarnings = [
+    # raised inside exchange_calendars on pandas 3.x; not our code
+    "ignore:Series.values returning an ndarray:Warning",
+]
 
 [tool.ruff]
 line-length = 100
