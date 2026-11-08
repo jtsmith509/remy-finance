@@ -1,6 +1,6 @@
 # DR-0027: Schedule-declared dividends become public on the ex-date (amends DR-0014)
 
-- **Status:** proposed (interim rule already implemented, because the alternative is a look-ahead defect)
+- **Status:** accepted (confirmed by Josh, 2026-11-08, after the live Massive check)
 - **Date:** 2026-11-08
 - **Source:** Live Massive check M1 (`docs/memos/evidence/R0.1-massive-20261108T224316Z.md`); amends DR-0014 item 2 (accepted)
 - **Stage:** R0
@@ -16,7 +16,7 @@ DR-0014 sets a dividend's `public_time` to its declaration date at 16:00 ET. The
 2. Option 1, plus a **conservative estimated amount** (the previous distribution) available from the declaration date, used only by the ASSIGN-1 dividend rule. That's more protective against early assignment, but an estimate is a forecast, and the board must not hold forecasts. It would need a separate, clearly labelled record type.
 3. Find the issuer's actual amount-announcement times (for SPY, State Street's notices) and use those. That's accurate but needs another data source.
 
-## Decision (proposed): option 1
+## Decision: option 1
 - **Detection:** a record is *schedule-declared* when its declaration date is shared by two or more different ex-dates for the same ticker. For these, `public_time` = **ex-date at 09:30 ET**. The vendor's `declaration_date` is kept on the record as data.
 - **All other dividends** keep DR-0014's rule: declaration date at 16:00 ET.
 - **The adapter** (`MassiveSource`) lists every schedule-declared record in `schedule_declared`, and `verify_massive.py` reports them.

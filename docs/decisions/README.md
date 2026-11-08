@@ -27,7 +27,7 @@
 | [DR-0023](DR-0023-univ-1-details.md) | UNIV-1 implementation details; option-volume read path | R0.5 | accepted |
 | [DR-0024](DR-0024-slot-finality.md) | Atomic slot finality and per-slot gap files (amends DR-0022) | R0 review | accepted |
 | [DR-0025](DR-0025-exact-decimal-arithmetic.md) | Exact Decimal arithmetic and strict numeric inputs | R0 review | accepted |
-| [DR-0026](DR-0026-data-source-matrix.md) | Which source supplies each data type (ThetaData, Massive, calendar) | R0.1 ext. | proposed |
-| [DR-0027](DR-0027-schedule-declared-dividends.md) | Schedule-declared dividends public on the ex-date (amends DR-0014) | R0.1 ext. | proposed |
+| [DR-0026](DR-0026-data-source-matrix.md) | Which source supplies each data type (ThetaData, Massive, calendar) | R0.1 ext. | accepted |
+| [DR-0027](DR-0027-schedule-declared-dividends.md) | Schedule-declared dividends public on the ex-date (amends DR-0014) | R0.1 ext. | accepted |
 
 Each record has these sections: context, options considered, decision, consequences. Status stays *proposed* until Josh confirms it. A confirmed DR is superseded only by a new, linked DR; it is never edited in place.

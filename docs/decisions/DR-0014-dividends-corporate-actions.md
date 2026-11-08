@@ -1,6 +1,6 @@
 # DR-0014: Dividend and corporate-action source
 
-- **Status:** accepted (confirmed by Josh, 2026-11-08, at Stop Point A); endpoints and per-type sources refined by **DR-0026**; schedule-declared dividends amended by **DR-0027** (both proposed)
+- **Status:** accepted (confirmed by Josh, 2026-11-08, at Stop Point A); endpoints and per-type sources refined by **DR-0026**; schedule-declared dividends amended by **DR-0027** (both accepted)
 - **Date:** 2026-11-08
 - **Source:** R0.1 data verification (check 3); supports DR-0009 (ASSIGN-1 dividend rule) and handoff §4 (`DividendEvent`, `CorporateAction`, exclusion of non-standard deliverables)
 - **Stage:** R0

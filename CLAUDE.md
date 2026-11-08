@@ -31,4 +31,4 @@ If the brief and the spec disagree, **stop and ask Josh**. Don't resolve it your
 ## Status
 
 - Current stage: **R0 code complete; at Stop Point B pending the live runs** listed in `docs/memos/R0-result.md`. Don't start R1 until Josh confirms.
-- DR-0001 to DR-0025 are **accepted** (2026-11-08). Change them only through new, linked DRs.
+- DR-0001 to DR-0027 are **accepted** (2026-11-08). Change them only through new, linked DRs.

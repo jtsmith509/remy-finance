@@ -1,6 +1,6 @@
 # DR-0026: Which source supplies each data type (ThetaData, Massive, calendar)
 
-- **Status:** proposed (live `scripts/verify_massive.py` run done 2026-11-08; results below)
+- **Status:** accepted (confirmed by Josh, 2026-11-08, after the live Massive check)
 - **Date:** 2026-11-08
 - **Source:** R0.1 extension (Massive), `docs/memos/R0.1-data-verification.md`; refines DR-0011, DR-0013 and DR-0014 (accepted) and DR-0021 (accepted)
 - **Stage:** R0
@@ -13,7 +13,7 @@ ThetaData (Options Standard plus Stock Standard) supplies options and underlying
 - **Massive for all stock data,** including NBBO on the Stocks Advanced plan, with ThetaData for options only. That means paying twice for stock quotes, and the board's underlying would come from a different vendor than its options.
 - **Massive for reference and economic data** (dividends, splits, ticker events, yields) where it's richer, and ThetaData for all market quotes.
 
-## Decision (proposed)
+## Decision
 
 | Data type | Primary | Cross-check or fallback | Plan needed |
 |---|---|---|---|
