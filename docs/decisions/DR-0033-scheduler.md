@@ -1,6 +1,6 @@
 # DR-0033: Prospective scheduler design (R1.6)
 
-- **Status:** proposed
+- **Status:** accepted (confirmed by Josh, 2026-11-09: skip recommendations from a dirty tree; nightly work at 17:30 ET; export to the registry-export branch via ~/remy-registry-export)
 - **Date:** 2026-11-09
 - **Source:** handoff §6 R1.6; DR-0002 (snapshot times), DR-0003 (execution quote at +5 min), DR-0012 (backup), DR-0022/0024 (gaps), DR-0026 (sources), DR-0028 (registry, run logs)
 - **Stage:** R1.6
@@ -61,7 +61,7 @@ Code: `src/remy_finance/scheduler/`.
   - The scheduler can't stop the Mac sleeping; `doctor`'s heartbeat check is what shows it.
   - Massive's prefetch adds about 50 s to each capture on the free plan, inside the 10-minute window.
 
-## Questions for Josh
-1. **Dirty tree (§4):** skip recommendations (proposed), or issue them with a `+dirty` commit label?
-2. **Nightly time (§6):** 17:30 ET for the export and backup?
-3. **The export checkout** at `~/remy-registry-export` (runbook step 3), pushed to the `registry-export` branch of this repository?
+## Questions for Josh (answered 2026-11-09)
+1. **Dirty tree (§4):** skip recommendations (proposed), or issue them with a `+dirty` commit label? **Skip.**
+2. **Nightly time (§6):** 17:30 ET for the export and backup? **Yes.**
+3. **The export checkout** at `~/remy-registry-export` (runbook step 3), pushed to the `registry-export` branch of this repository? **Yes.**
