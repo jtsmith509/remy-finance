@@ -1,4 +1,4 @@
-# R0 result: data and correctness (Stop Point B: ready for sign-off)
+# R0 result: data and correctness (Stop Point B: closed 2026-11-09)
 
 - **Stage:** R0 (handoff §5)
 - **Date:** 2026-11-08, with the live runs completed 2026-11-09
@@ -12,7 +12,7 @@
 > - **Decision records:** all are written and accepted (DR-0001 to DR-0027).
 > - **Independent review:** an independent review (Codex) found 8 defects, and all are fixed with regression tests.
 >
-> **R1 has not started.** It waits for Josh's confirmation.
+> **Stop Point B closed on 2026-11-09. R1 has started.**
 
 ## What was built
 
@@ -145,8 +145,7 @@ Codex reviewed commit `aeda0c2` against `docs/review/R0-review-brief.md` and fou
 - **Timing:** both landed about 20 s after their scheduled times, well inside the 10-minute window (DR-0022), and no gap was recorded.
 - **Move generator:** 245,490 candidates (226,052 priced, 19,437 unpriceable, 19,387 quantity 0) in 70.9 s, with list hash `fab52c21b72fba66…`. This ran after the decision board was stored.
 
-## Stop Point B: questions for Josh
-1. **Sign-off:** does R0 meet the definition of done, so that R1 can start? This covers the live snapshot, the replay with dividends, the independent-review fixes and 309 green tests.
-2. **Spec §11 versus the brief (still open):** spec §11 requires a recorded **power estimate** and pre-registered scoring rules *before prospective paper trading begins*, which is R1's 5-day live run. The brief's R1 tasks don't list them. Should they be drafted as documents during R1, before the live run, or deferred?
-3. **Move-generator speed** (56–71 s after DR-0025): optimize it early in R1, or leave it, since it doesn't affect the snapshot window?
-
+## Stop Point B: closed (Josh, 2026-11-09)
+1. **Sign-off:** R0 is **signed off**, and **R1 starts now**. The next hard stop is Stop Point C.
+2. **Spec §11:** the **power estimate and the pre-registered scoring and evaluation document** are drafted **during R1, for Josh's approval before the 5-day prospective live run starts**.
+3. **Move-generator speed:** **optimize it early in R1**, keeping the exactness guarantee (DR-0025) and all tests, before any replay month runs.
