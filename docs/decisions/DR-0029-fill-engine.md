@@ -1,6 +1,6 @@
 # DR-0029: Paper fill engine details (R1.2–R1.3)
 
-- **Status:** proposed
+- **Status:** accepted (confirmed by Josh, 2026-11-09: stock closes at once while options retry; a missing underlying quote is annotated and skipped)
 - **Date:** 2026-11-09
 - **Source:** handoff §6 R1.2–R1.3; DR-0003 (execution quote at +5 min), DR-0009 (ASSIGN-1, stock always fillable), DR-0010 (EXP-1), DR-0028 (journal order rules)
 - **Stage:** R1.2
@@ -45,6 +45,6 @@ The brief fixes FILL-1 (cross the spread, full displayed size, all-or-none, sing
   - Partial assignment of a leg isn't modelled.
   - Official closes don't yet have a data-adapter read path; that comes with the scheduler (R1.6).
 
-## Questions for Josh
-1. **Forced close (§5):** is closing the stock straight away while the options retry the right reading of DR-0009?
-2. **Missing underlying quote (§4):** annotate and skip, or assume conservatively that every in-the-money-looking short leg is assigned? Without a spot price, "in the money" can't be determined, so skipping is the only well-defined choice.
+## Questions for Josh (answered 2026-11-09)
+1. **Forced close (§5):** is closing the stock straight away while the options retry the right reading of DR-0009? **Yes.**
+2. **Missing underlying quote (§4):** annotate and skip, or assume conservatively that every in-the-money-looking short leg is assigned? Without a spot price, "in the money" can't be determined, so skipping is the only well-defined choice. **Annotate and skip.**
