@@ -63,6 +63,51 @@ def test_update_and_delete_abort(reg: Registry, sql: str) -> None:
     assert reg.verify().ok
 
 
+COLS = "seq, trade_id, record_json, record_hash, prev_chain, chain_hash"
+
+
+@pytest.mark.parametrize(
+    ("table", "values"),
+    [
+        # INSERT OR REPLACE deletes the conflicting row without firing DELETE triggers.
+        ("journal", "1, :t, '{}', 'h', :g, 'c1'"),  # overwrite seq 1
+        ("journal", "9, :t, '{}', 'h', :head, 'c2'"),  # skips sequence numbers
+        ("journal", "5, :t, '{}', 'h', :g, 'c3'"),  # next seq, wrong prev_chain
+        ("journal", "5, :t, '{}', 'h', :head, :head"),  # reuses a chain hash
+        ("recommendations", "2, :t, '{}', 'h', :rhead, 'c4'"),  # replaces trade by trade_id
+        ("recommendations", "1, 'T-x', '{}', 'h', :g, 'c5'"),  # overwrite seq 1
+    ],
+)
+@pytest.mark.parametrize("verb", ["INSERT OR REPLACE INTO", "REPLACE INTO", "INSERT INTO"])
+def test_insert_must_be_the_next_row(reg: Registry, table: str, values: str, verb: str) -> None:
+    rec = filled_trade(reg)
+    cols = COLS + (", kind" if table == "journal" else "")
+    vals = values + (", 'ANNOTATION'" if table == "journal" else "")
+    params = {
+        "t": rec.trade_id,
+        "g": GENESIS,
+        "head": reg.head("journal")[1],
+        "rhead": reg.head("recommendations")[1],
+    }
+    with raw(reg) as conn, pytest.raises(sqlite3.IntegrityError):
+        conn.execute(f"{verb} {table} ({cols}) VALUES ({vals})", params)
+    assert reg.verify().ok
+    assert reg.head("journal")[0] == 4
+
+
+def test_upsert_and_meta_insert_refused(reg: Registry) -> None:
+    filled_trade(reg)
+    with raw(reg) as conn:
+        with pytest.raises(sqlite3.IntegrityError, match="append-only"):
+            conn.execute(
+                "INSERT INTO meta(key, value) VALUES ('mode', 'REPLAY') "
+                "ON CONFLICT(key) DO UPDATE SET value = excluded.value"
+            )
+        with pytest.raises(sqlite3.IntegrityError, match="append-only"):
+            conn.execute("INSERT OR REPLACE INTO meta(key, value) VALUES ('mode', 'REPLAY')")
+    assert reg.verify().ok and reg.mode is Mode.PROSPECTIVE
+
+
 def test_rows_chain_from_genesis(reg: Registry) -> None:
     filled_trade(reg)
     rows = reg.rows("journal")
@@ -216,7 +261,7 @@ def test_export_is_incremental_and_append_only(reg: Registry, tmp_path: Path) ->
     filled_trade(reg)
     first = reg.export(out, DAY)
     assert len(first) == 5
-    path = out / "2026" / "11" / "09.jsonl"
+    path = out / "prospective" / "2026" / "11" / "09.jsonl"
     before = path.read_text()
     assert reg.export(out, DAY) == []
     filled_trade(reg, engine="RAND-1")

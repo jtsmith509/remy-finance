@@ -19,6 +19,8 @@ snapshot_app = typer.Typer(help="Market snapshots (R0.4).", no_args_is_help=True
 app.add_typer(snapshot_app, name="snapshot")
 universe_app = typer.Typer(help="Point-in-time universe UNIV-1 (R0.5).", no_args_is_help=True)
 app.add_typer(universe_app, name="universe")
+registry_app = typer.Typer(help="Paper-trade registry (R1.1).", no_args_is_help=True)
+app.add_typer(registry_app, name="registry")
 
 SymbolsOpt = Annotated[
     str,
@@ -369,6 +371,87 @@ def snapshot_verify() -> None:
             typer.echo(f"FAIL {manifest.parent}: {e}")
     typer.echo(f"verified {n} snapshots, {bad} failed; gaps recorded: {len(store.gaps())}")
     raise typer.Exit(1 if bad else 0)
+
+
+ModeOpt = Annotated[str, typer.Option(help="prospective or replay")]
+
+
+def _mode(text: str) -> Mode:
+    try:
+        return Mode(text.upper())
+    except ValueError as e:
+        raise typer.BadParameter("mode must be prospective or replay") from e
+
+
+def _open_registry(mode_text: str):  # type: ignore[no-untyped-def]
+    from remy_finance.registry import Registry, registry_path
+
+    mode = _mode(mode_text)
+    path = registry_path(_data_dir(), mode)
+    if not path.exists():
+        typer.echo(f"no {mode.value} registry at {path} (create it with `remy registry init`)")
+        raise typer.Exit(1)
+    return Registry.open(path, mode)
+
+
+@registry_app.command("init")
+def registry_init(mode: ModeOpt = "prospective") -> None:
+    """Create an empty registry database for one mode."""
+    from remy_finance.registry import Registry, registry_path
+
+    m = _mode(mode)
+    path = registry_path(_data_dir(), m)
+    Registry.create(path, m).close()
+    typer.echo(f"created {m.value} registry at {path}")
+
+
+@registry_app.command("verify")
+def registry_verify(
+    mode: ModeOpt = "prospective",
+    export_dir: Annotated[
+        Path | None, typer.Option(help="Also check rows exported here are unchanged.")
+    ] = None,
+) -> None:
+    """Recompute the hash chains and re-check every record (exit 1 on any problem)."""
+    with _open_registry(mode) as reg:
+        report = reg.verify(export_dir=export_dir)
+    for table, n in report.rows.items():
+        typer.echo(f"{table}: {n} rows, head {report.heads[table][:16]}")
+    if export_dir is not None:
+        typer.echo(f"exported rows checked: {report.exported_rows_checked}")
+    for p in report.problems:
+        typer.echo(f"FAIL {p}")
+    typer.echo("registry OK" if report.ok else f"registry FAILED ({len(report.problems)})")
+    raise typer.Exit(0 if report.ok else 1)
+
+
+@registry_app.command("export")
+def registry_export(
+    out: Annotated[Path, typer.Option(help="Export directory (registry-export checkout).")],
+    mode: ModeOpt = "prospective",
+    day: Annotated[str, typer.Option(help="YYYY-MM-DD; default today (ET)")] = "",
+) -> None:
+    """Append rows not yet exported to OUT/YYYY/MM/DD.jsonl (verifies first)."""
+    from remy_finance.data.timeutil import et_date
+
+    when = date.fromisoformat(day) if day else et_date(datetime.now().astimezone())
+    with _open_registry(mode) as reg:
+        report = reg.verify(export_dir=out if out.exists() else None)
+        if not report.ok:
+            for p in report.problems:
+                typer.echo(f"FAIL {p}")
+            typer.echo("not exporting: registry verification failed")
+            raise typer.Exit(1)
+        rows = reg.export(out, when)
+    typer.echo(f"exported {len(rows)} new rows for {when}")
+
+
+@registry_app.command("backup")
+def registry_backup(mode: ModeOpt = "prospective") -> None:
+    """Copy the registry to data/backup/ with SQLite's online backup (DR-0012)."""
+    with _open_registry(mode) as reg:
+        dest = reg.backup(_data_dir() / "backup")
+    typer.echo(f"backup written: {dest}")
 
 
 if __name__ == "__main__":

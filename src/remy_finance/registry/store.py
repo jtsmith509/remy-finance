@@ -65,16 +65,41 @@ CREATE INDEX journal_trade ON journal(trade_id, seq);
 """
 
 IMMUTABLE_TABLES = ("meta", "recommendations", "journal")
-TRIGGERS = tuple(f"{t}_no_{op.lower()}" for t in IMMUTABLE_TABLES for op in ("UPDATE", "DELETE"))
+CHAINED_TABLES = ("recommendations", "journal")
+TRIGGERS = (
+    *(f"{t}_no_{op}" for t in IMMUTABLE_TABLES for op in ("update", "delete")),
+    "meta_no_insert",
+    *(f"{t}_next_row_only" for t in CHAINED_TABLES),
+)
 
 
 def _trigger_sql() -> str:
-    return "\n".join(
+    """UPDATE and DELETE always abort. INSERT must be exactly the next row of the chain:
+    ``INSERT OR REPLACE`` deletes a conflicting row *without* firing DELETE triggers, so the
+    insert trigger refuses any row that would collide with an existing one."""
+    parts = [
         f"CREATE TRIGGER {t}_no_{op.lower()} BEFORE {op} ON {t} "
         f"BEGIN SELECT RAISE(ABORT, 'registry is append-only: {op} on {t} refused'); END;"
         for t in IMMUTABLE_TABLES
         for op in ("UPDATE", "DELETE")
+    ]
+    parts.append(
+        "CREATE TRIGGER meta_no_insert BEFORE INSERT ON meta "
+        "BEGIN SELECT RAISE(ABORT, 'registry is append-only: INSERT on meta refused'); END;"
     )
+    for t in CHAINED_TABLES:
+        unique_trade = f" OR EXISTS (SELECT 1 FROM {t} WHERE trade_id = NEW.trade_id)"
+        parts.append(
+            f"CREATE TRIGGER {t}_next_row_only BEFORE INSERT ON {t} WHEN "
+            f"NEW.seq IS NOT (SELECT COALESCE(MAX(seq), 0) + 1 FROM {t}) "
+            f"OR NEW.prev_chain IS NOT COALESCE("
+            f"(SELECT chain_hash FROM {t} ORDER BY seq DESC LIMIT 1), '{GENESIS}') "
+            f"OR EXISTS (SELECT 1 FROM {t} WHERE chain_hash = NEW.chain_hash)"
+            f"{unique_trade if t == 'recommendations' else ''} "
+            f"BEGIN SELECT RAISE(ABORT, 'registry is append-only: "
+            f"{t} insert is not the next row of the chain'); END;"
+        )
+    return "\n".join(parts)
 
 
 def chain_hash(prev_chain: str, record_json: str) -> str:
@@ -147,11 +172,11 @@ class Registry:
         path.parent.mkdir(parents=True, exist_ok=True)
         conn = _connect(path)
         with conn:
-            conn.executescript("BEGIN;" + _SCHEMA + _trigger_sql() + "COMMIT;")
-            conn.executemany(
-                "INSERT INTO meta(key, value) VALUES (?, ?)",
-                [("mode", mode.value), ("schema", SCHEMA_VERSION)],
+            meta = (
+                f"INSERT INTO meta(key, value) VALUES ('mode', '{mode.value}'), "
+                f"('schema', '{SCHEMA_VERSION}');"
             )
+            conn.executescript("BEGIN;" + _SCHEMA + meta + _trigger_sql() + "COMMIT;")
         return cls(path, conn, mode)
 
     @classmethod
@@ -354,6 +379,7 @@ class Registry:
         return out
 
     def _check_export(self, export_dir: Path, problems: list[str]) -> int:
+        export_dir = export_dir / self.mode.value.lower()
         current = {(r.table, r.seq): r for t in TABLES for r in self.rows(t)}
         checked = 0
         for path in sorted(export_dir.glob("*/*/*.jsonl")):
@@ -369,9 +395,10 @@ class Registry:
     # ------------------------------------------------------------------ export, backup
 
     def export(self, export_dir: Path, day: date) -> list[Row]:
-        """Write rows not yet exported to ``export_dir/YYYY/MM/DD.jsonl`` (one JSON line
+        """Write rows not yet exported to ``export_dir/<mode>/YYYY/MM/DD.jsonl`` (one JSON line
         per row, recommendations then journal, in sequence order). Earlier lines are kept
         unchanged; the file is replaced atomically. Returns the rows written."""
+        export_dir = export_dir / self.mode.value.lower()
         exported = _exported_heads(export_dir)
         new = [r for t in TABLES for r in self.rows(t, exported.get(t, 0))]
         if not new:

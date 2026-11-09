@@ -27,6 +27,7 @@ If the brief and the spec disagree, **stop and ask Josh**. Don't resolve it your
 - The test suite is offline: it runs against `FixtureSource` with no network.
 - `data/` is git-ignored: snapshots, registry DBs and logs. Never commit market data.
 - Commit in small, reviewable steps with descriptive messages.
+- After each major milestone, write a review brief in `docs/review/` for Josh to hand to Codex as an independent reviewer. Record each finding and its resolution in a findings file, with a regression test for every fix.
 
 ## Status
 

@@ -29,5 +29,6 @@
 | [DR-0025](DR-0025-exact-decimal-arithmetic.md) | Exact Decimal arithmetic and strict numeric inputs | R0 review | accepted |
 | [DR-0026](DR-0026-data-source-matrix.md) | Which source supplies each data type (ThetaData, Massive, calendar) | R0.1 ext. | accepted |
 | [DR-0027](DR-0027-schedule-declared-dividends.md) | Schedule-declared dividends public on the ex-date (amends DR-0014) | R0.1 ext. | accepted |
+| [DR-0028](DR-0028-registry-details.md) | Registry implementation details REGISTRY-1 | R1.1 | proposed |
 
 Each record has these sections: context, options considered, decision, consequences. Status stays *proposed* until Josh confirms it. A confirmed DR is superseded only by a new, linked DR; it is never edited in place.
