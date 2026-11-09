@@ -128,6 +128,18 @@ class OptionVolume(_PublicObservation):
     contracts: int = Field(ge=0)
 
 
+class OfficialClose(_PublicObservation):
+    """An underlying's official closing price for one session (EXP-1 settlement input).
+
+    ``event_time`` is the close (16:00 ET, earlier on half days); ``public_time`` is when
+    the vendor publishes it (DR-0026: ThetaData end-of-day, 17:15 ET).
+    """
+
+    symbol: str = Field(min_length=1)
+    session_date: date
+    price: PosDec
+
+
 class Provenance(Record):
     """Where data in a snapshot came from (vendor, endpoint, terminal version, ...)."""
 
