@@ -113,6 +113,12 @@ Codex reviewed commit `aeda0c2` against `docs/review/R0-review-brief.md` and fou
 - **CI:** GitHub Actions (`.github/workflows/ci.yml`) runs the offline gate (ruff, format, mypy, pytest) on every push and pull request, with no secrets. Its first run passed.
 - **Gate:** 307 tests pass.
 
+**Replay with dividends: `remy snapshot build --date 2026-11-05 --session open --movegen`** (2026-11-09): **OK.**
+- **Boards:** DECISION `5de474d665b8f6b8`, 160,808 quotes, **0 quality notes**, built in 46.1 s. EXECUTION `b831d66bea0c6071`, 160,808 quotes, 0 notes, built in 38.4 s.
+- **Massive:** dividends and splits for all 50 symbols came from the batched prefetch, with no per-symbol data errors.
+- **Move generator:** 238,717 candidates (213,612 priced, 25,104 unpriceable, 17,988 quantity 0), list hash `06172c89d1da9885…`, in **56.0 s**.
+- **Performance note:** 56 s is about 3× Sunday's 18.2 s on a comparable board. That's attributable to the exact-arithmetic contexts added for review finding F04 (DR-0025). It doesn't affect the prospective window, because the decision board is stored before candidates are generated. Profiling and optimizing it is listed for R1.
+
 ## Remaining before Stop Point B closes (on the Mac mini)
 ```bash
 cd ~/remy-finance && git pull && uv sync
