@@ -108,6 +108,7 @@ class MassiveSource:
         max_retries: int = 3,
         rate_series: Sequence[tuple[str, str, str]] = DEFAULT_RATE_SERIES,
         sleep: Callable[[float], None] = time.sleep,
+        include_ticker_events: bool = True,
     ) -> None:
         key = api_key or os.environ.get("MASSIVE_API_KEY") or os.environ.get("POLYGON_API_KEY")
         if not key:
@@ -129,6 +130,7 @@ class MassiveSource:
         self._min_interval = min_interval
         self._max_retries = max_retries
         self._rate_series = tuple(rate_series)
+        self._include_ticker_events = include_ticker_events
         self._sleep = sleep
         self._last_request = 0.0
         self._div_cache: dict[str, tuple[DividendEvent, ...]] = {}
@@ -182,56 +184,59 @@ class MassiveSource:
 
     def _load_dividends(self, symbol: str) -> tuple[DividendEvent, ...]:
         if symbol not in self._div_cache:
-            now = self._clock()
-            out: list[DividendEvent] = []
             rows = self._paged(
                 "/stocks/v1/dividends",
                 {"ticker": symbol, "limit": "5000", "sort": "ex_dividend_date.asc"},
             )
-            # A declaration date shared by several different ex-dates is a *schedule*
-            # announcement (e.g. SPY's whole year declared on 2 Jan): the per-payment amount
-            # is not known then. Such records become public on the ex-date (DR-0027).
-            ex_by_decl: dict[str, set[str]] = {}
-            for r in rows:
-                if r.get("declaration_date"):
-                    ex_by_decl.setdefault(str(r["declaration_date"]), set()).add(
-                        str(r.get("ex_dividend_date"))
-                    )
-            for r in rows:
-                ex = r.get("ex_dividend_date")
-                decl = r.get("declaration_date")
-                if not decl:
-                    self.skipped.append(f"{symbol} ex {ex}: no declaration_date")
-                    continue
-                if str(r.get("currency", "USD")) != "USD":
-                    self.skipped.append(f"{symbol} ex {ex}: currency {r.get('currency')}")
-                    continue
-                if len(ex_by_decl.get(str(decl), ())) > 1:
-                    public = et_at(date.fromisoformat(str(ex)), 9, 30)
-                    self.schedule_declared.append(f"{symbol} ex {ex}: schedule declared {decl}")
-                else:
-                    public = et_at(date.fromisoformat(decl), 16)
-                dist = str(r.get("distribution_type", "unknown"))
-                out.append(
-                    DividendEvent(
-                        symbol=symbol,
-                        ex_date=date.fromisoformat(str(ex)),
-                        amount=Decimal(str(r["cash_amount"])),
-                        dividend_type=DividendType.ORDINARY
-                        if dist in ORDINARY_DISTRIBUTIONS
-                        else DividendType.SPECIAL,
-                        declaration_date=date.fromisoformat(decl),
-                        pay_date=date.fromisoformat(r["pay_date"]) if r.get("pay_date") else None,
-                        event_time=public,
-                        public_time=public,
-                        ingest_time=now,
-                        source="massive:stocks/v1/dividends",
-                    )
-                )
-            self._div_cache[symbol] = tuple(
-                sorted(out, key=lambda d: (d.ex_date, d.canonical_json()))
-            )
+            self._div_cache[symbol] = self._parse_dividends(symbol, rows)
         return self._div_cache[symbol]
+
+    def _parse_dividends(
+        self, symbol: str, rows: list[dict[str, Any]]
+    ) -> tuple[DividendEvent, ...]:
+        now = self._clock()
+        out: list[DividendEvent] = []
+        # A declaration date shared by several different ex-dates is a *schedule*
+        # announcement (e.g. SPY's whole year declared on 2 Jan): the per-payment amount
+        # is not known then. Such records become public on the ex-date (DR-0027).
+        ex_by_decl: dict[str, set[str]] = {}
+        for r in rows:
+            if r.get("declaration_date"):
+                ex_by_decl.setdefault(str(r["declaration_date"]), set()).add(
+                    str(r.get("ex_dividend_date"))
+                )
+        for r in rows:
+            ex = r.get("ex_dividend_date")
+            decl = r.get("declaration_date")
+            if not decl:
+                self.skipped.append(f"{symbol} ex {ex}: no declaration_date")
+                continue
+            if str(r.get("currency", "USD")) != "USD":
+                self.skipped.append(f"{symbol} ex {ex}: currency {r.get('currency')}")
+                continue
+            if len(ex_by_decl.get(str(decl), ())) > 1:
+                public = et_at(date.fromisoformat(str(ex)), 9, 30)
+                self.schedule_declared.append(f"{symbol} ex {ex}: schedule declared {decl}")
+            else:
+                public = et_at(date.fromisoformat(decl), 16)
+            dist = str(r.get("distribution_type", "unknown"))
+            out.append(
+                DividendEvent(
+                    symbol=symbol,
+                    ex_date=date.fromisoformat(str(ex)),
+                    amount=Decimal(str(r["cash_amount"])),
+                    dividend_type=DividendType.ORDINARY
+                    if dist in ORDINARY_DISTRIBUTIONS
+                    else DividendType.SPECIAL,
+                    declaration_date=date.fromisoformat(decl),
+                    pay_date=date.fromisoformat(r["pay_date"]) if r.get("pay_date") else None,
+                    event_time=public,
+                    public_time=public,
+                    ingest_time=now,
+                    source="massive:stocks/v1/dividends",
+                )
+            )
+        return tuple(sorted(out, key=lambda d: (d.ex_date, d.canonical_json())))
 
     def dividends(self, symbol: str, known_as_of: datetime) -> Sequence[DividendEvent]:
         return tuple(d for d in self._load_dividends(symbol) if d.public_time <= known_as_of)
@@ -239,10 +244,15 @@ class MassiveSource:
     # ----------------------------------------------------- corporate actions
 
     def _splits(self, symbol: str, now: datetime) -> list[CorporateAction]:
-        out: list[CorporateAction] = []
         rows = self._paged(
             "/stocks/v1/splits", {"ticker": symbol, "limit": "5000", "sort": "execution_date.asc"}
         )
+        return self._parse_splits(symbol, rows, now)
+
+    def _parse_splits(
+        self, symbol: str, rows: list[dict[str, Any]], now: datetime
+    ) -> list[CorporateAction]:
+        out: list[CorporateAction] = []
         for r in rows:
             eff = date.fromisoformat(str(r["execution_date"]))
             kind = str(r.get("adjustment_type", ""))
@@ -301,12 +311,52 @@ class MassiveSource:
         if symbol not in self._action_cache:
             now = self._clock()
             actions = self._splits(symbol, now)  # a splits failure raises
-            try:
-                actions += self._ticker_changes(symbol, now)
-            except MassiveError as e:
-                self.skipped.append(f"{symbol}: ticker events unavailable ({e})")
+            actions += self._events_if_enabled(symbol, now)
             self._action_cache[symbol] = tuple(sorted(actions, key=lambda a: a.canonical_json()))
         return self._action_cache[symbol]
+
+    def _events_if_enabled(self, symbol: str, now: datetime) -> list[CorporateAction]:
+        if not self._include_ticker_events:
+            return []
+        try:
+            return self._ticker_changes(symbol, now)
+        except MassiveError as e:
+            self.skipped.append(f"{symbol}: ticker events unavailable ({e})")
+            return []
+
+    def prefetch(self, symbols: Sequence[str], chunk: int = 25) -> None:
+        """Load dividends and splits for many symbols in a few batched requests.
+
+        Uses ``ticker.any_of`` (up to ``chunk`` tickers per request) so a 50-name board needs
+        about 4 requests instead of about 150; on the free plan (about 5 requests a minute)
+        that is the difference between under a minute and about 30 minutes. Later
+        ``dividends()``/``corporate_actions()`` calls for these symbols are served from cache.
+        Ticker events have no batched form; they are fetched per symbol only when
+        ``include_ticker_events`` is on.
+        """
+        wanted = sorted(
+            {s for s in symbols if s not in self._div_cache or s not in self._action_cache}
+        )
+        for i in range(0, len(wanted), chunk):
+            group = wanted[i : i + chunk]
+            joined = ",".join(group)
+            now = self._clock()
+            div_rows = self._paged(
+                "/stocks/v1/dividends",
+                {"ticker.any_of": joined, "limit": "5000", "sort": "ex_dividend_date.asc"},
+            )
+            split_rows = self._paged(
+                "/stocks/v1/splits",
+                {"ticker.any_of": joined, "limit": "5000", "sort": "execution_date.asc"},
+            )
+            for sym in group:
+                mine = [r for r in div_rows if str(r.get("ticker")) == sym]
+                self._div_cache[sym] = self._parse_dividends(sym, mine)
+                splits = self._parse_splits(
+                    sym, [r for r in split_rows if str(r.get("ticker")) == sym], now
+                )
+                actions = splits + self._events_if_enabled(sym, now)
+                self._action_cache[sym] = tuple(sorted(actions, key=lambda a: a.canonical_json()))
 
     def corporate_actions(self, symbol: str, known_as_of: datetime) -> Sequence[CorporateAction]:
         """Splits and ticker changes, plus special cash dividends as SPECIAL_DIVIDEND actions.

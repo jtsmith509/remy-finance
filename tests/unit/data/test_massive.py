@@ -379,3 +379,82 @@ def test_view_rejects_future_dividends_from_massive() -> None:
     leaky = Leaky("k", base_url="http://m", transport=httpx.MockTransport(h))
     with pytest.raises(LookaheadError):
         PointInTimeView(leaky, TS).dividends("KO")
+
+
+def test_prefetch_batches_dividends_and_splits_and_serves_from_cache() -> None:
+    seen: list[httpx.Request] = []
+
+    def h(req: httpx.Request) -> httpx.Response:
+        seen.append(req)
+        tickers = req.url.params["ticker.any_of"].split(",")
+        if req.url.path == "/stocks/v1/dividends":
+            rows = []
+            if "SPY" in tickers:  # schedule-declared: two ex-dates share one declaration
+                rows += [
+                    {
+                        "ticker": "SPY",
+                        "cash_amount": 1.8,
+                        "declaration_date": "2026-01-02",
+                        "ex_dividend_date": d,
+                        "distribution_type": "recurring",
+                    }
+                    for d in ("2026-03-20", "2026-06-18")
+                ]
+            if "KO" in tickers:
+                rows.append(
+                    {
+                        "ticker": "KO",
+                        "cash_amount": 0.53,
+                        "declaration_date": "2026-07-15",
+                        "ex_dividend_date": "2026-09-15",
+                        "distribution_type": "recurring",
+                    }
+                )
+            return httpx.Response(200, json={"results": rows})
+        if req.url.path == "/stocks/v1/splits":
+            rows = (
+                [
+                    {
+                        "ticker": "NVDA",
+                        "execution_date": "2024-06-10",
+                        "split_from": 1,
+                        "split_to": 10,
+                        "adjustment_type": "forward_split",
+                    }
+                ]
+                if "NVDA" in tickers
+                else []
+            )
+            return httpx.Response(200, json={"results": rows})
+        raise AssertionError(f"unexpected request {req.url}")  # no per-symbol calls, no events
+
+    symbols = ["SPY", "KO", "NVDA"] + [f"S{i:02d}" for i in range(27)]  # 30 symbols
+    s = src(h, include_ticker_events=False)
+    s.prefetch(symbols)
+    assert len(seen) == 4  # 2 batches x (dividends + splits)
+    assert all(len(r.url.params["ticker.any_of"].split(",")) <= 25 for r in seen)
+    later = datetime(2026, 11, 6, 21, tzinfo=UTC)
+    assert [d.ex_date for d in s.dividends("KO", later)] == [date(2026, 9, 15)]
+    assert len(s.schedule_declared) == 2  # SPY detection works inside a mixed batch
+    assert [a.action_type for a in s.corporate_actions("NVDA", later)] == [
+        CorporateActionType.SPLIT
+    ]
+    assert s.dividends("S05", later) == () and s.corporate_actions("S05", later) == ()
+    assert len(seen) == 4  # everything above came from cache
+    s.prefetch(symbols)
+    assert len(seen) == 4  # already cached: no new requests
+
+
+def test_ticker_events_flag_controls_per_symbol_event_calls() -> None:
+    paths: list[str] = []
+
+    def h(req: httpx.Request) -> httpx.Response:
+        paths.append(req.url.path)
+        if "events" in req.url.path:
+            return httpx.Response(200, json={"results": {"events": []}})
+        return httpx.Response(200, json={"results": []})
+
+    src(h, include_ticker_events=False).corporate_actions("KO", TS)
+    assert not any("events" in p for p in paths)
+    src(h).corporate_actions("KO", TS)
+    assert any("events" in p for p in paths)

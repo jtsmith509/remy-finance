@@ -53,16 +53,33 @@ def _session(text: str) -> Session:
         raise typer.BadParameter("session must be open or close") from e
 
 
-def _sources(no_events: bool):  # type: ignore[no-untyped-def]
+def _sources(no_events: bool, symbols: list[str]):  # type: ignore[no-untyped-def]
+    """ThetaData for quotes and rates; Massive for dividends and splits (DR-0026).
+
+    Massive's dividends and splits for all ``symbols`` are prefetched in a few batched,
+    throttled requests (free plan: about 5 a minute), so building a board needs no further
+    Massive calls. Per-symbol ticker events are skipped for snapshots (no batched form).
+    """
     from remy_finance.data.composite import CompositeSource
     from remy_finance.data.massive import MassiveSource
     from remy_finance.data.thetadata import ThetaDataSource
 
     theta = ThetaDataSource()
-    # Without Massive, the events side is ThetaData itself, which raises: every symbol then
-    # carries a quality note instead of silently having no dividends.
-    events = theta if no_events else MassiveSource()
-    return theta, CompositeSource(quotes=theta, events=events)
+    if no_events:
+        # The events side is ThetaData itself, which raises: every symbol then carries a
+        # quality note instead of silently having no dividends.
+        return theta, CompositeSource(quotes=theta, events=theta)
+    massive = MassiveSource(
+        min_interval=float(os.environ.get("MASSIVE_MIN_INTERVAL", "12.5")),
+        include_ticker_events=False,
+    )
+    t0 = time.perf_counter()
+    massive.prefetch(symbols)
+    typer.echo(
+        f"prefetched Massive dividends/splits for {len(symbols)} symbols in "
+        f"{massive.requests_made} requests ({time.perf_counter() - t0:.0f}s)"
+    )
+    return theta, CompositeSource(quotes=theta, events=massive)
 
 
 def _report_movegen(state) -> None:  # type: ignore[no-untyped-def]
@@ -112,7 +129,7 @@ def snapshot_build(
 
     d, sess = date.fromisoformat(date_), _session(session)
     syms, universe_version = _symbols(symbols, d)
-    _, source = _sources(no_events)
+    _, source = _sources(no_events, syms)
     store = SnapshotStore(_data_dir() / "snapshots")
     prov = (Provenance(source="cli", details=(("command", "snapshot build"),)),)
     decision_id: str | None = None
@@ -232,10 +249,13 @@ def snapshot_take(
         if not wait or delay > timedelta(hours=3).total_seconds():
             typer.echo(f"not taking a snapshot: too early, the window is {window} (use --wait)")
             raise typer.Exit(2)
-        typer.echo(f"waiting {delay / 60:.1f} min for the {window} window")
-        time.sleep(delay)
     syms, universe_version = _symbols(symbols, today)
-    theta, source = _sources(no_events)
+    theta, source = _sources(no_events, syms)  # prefetch before waiting for the window
+    if now < start:
+        delay = (start - datetime.now(UTC)).total_seconds()
+        if delay > 0:
+            typer.echo(f"waiting {delay / 60:.1f} min for the {window} window")
+            time.sleep(delay)
     prov = (Provenance(source="cli", details=(("command", "snapshot take"),)),)
     decision_id: str | None = None
     for i, kind in enumerate(kinds):

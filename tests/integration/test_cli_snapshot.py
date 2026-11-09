@@ -31,7 +31,7 @@ def test_build_without_symbols_uses_universe(
             f.underlying_quote(at=snapshot_time(DAY, Session.OPEN, SnapshotKind.EXECUTION)),
         ]
     )
-    monkeypatch.setattr(cli, "_sources", lambda no_events: (src, src))
+    monkeypatch.setattr(cli, "_sources", lambda no_events, *_: (src, src))
     UniverseStore(tmp_path / "universe").write(
         UniverseDecision(
             rule_version="UNIV-1",
@@ -91,7 +91,7 @@ def test_take_on_a_weekend_exits_cleanly_without_fetching(
     monkeypatch.setenv("REMY_DATA_DIR", str(tmp_path))
     monkeypatch.setattr(cli, "datetime", Sunday)
     monkeypatch.setattr(
-        cli, "_sources", lambda no_events: pytest.fail("must not fetch outside the window")
+        cli, "_sources", lambda no_events, *_: pytest.fail("must not fetch outside the window")
     )
     result = CliRunner().invoke(
         cli.app, ["snapshot", "take", "--session", "open", "--symbols", "XYZ"]
@@ -129,7 +129,9 @@ def test_f05_late_snapshot_take_records_a_gap(
 ) -> None:
     monkeypatch.setenv("REMY_DATA_DIR", str(tmp_path))
     _freeze(monkeypatch, FRI_1011_ET)
-    monkeypatch.setattr(cli, "_sources", lambda no_events: pytest.fail("must not fetch when late"))
+    monkeypatch.setattr(
+        cli, "_sources", lambda no_events, *_: pytest.fail("must not fetch when late")
+    )
     result = _take("--with-execution")
     assert result.exit_code == 2 and "too late" in result.output  # type: ignore[attr-defined]
     store = SnapshotStore(tmp_path / "snapshots")
@@ -142,7 +144,7 @@ def test_f05_capture_overrun_records_a_gap(tmp_path: Path, monkeypatch: pytest.M
 
     monkeypatch.setenv("REMY_DATA_DIR", str(tmp_path))
     _freeze(monkeypatch, FRI_1002_ET)  # started inside the window ...
-    monkeypatch.setattr(cli, "_sources", lambda no_events: (None, None))
+    monkeypatch.setattr(cli, "_sources", lambda no_events, *_: (None, None))
     slow_board = f.market_state(
         mode=Mode.PROSPECTIVE, as_of=FRI_1011_ET
     )  # ... but finished at 10:11
@@ -161,7 +163,7 @@ def test_f05_capture_failure_records_gap_then_raises(
 
     monkeypatch.setenv("REMY_DATA_DIR", str(tmp_path))
     _freeze(monkeypatch, FRI_1002_ET)
-    monkeypatch.setattr(cli, "_sources", lambda no_events: (None, None))
+    monkeypatch.setattr(cli, "_sources", lambda no_events, *_: (None, None))
 
     def boom(*a: object, **k: object) -> object:
         raise RuntimeError("terminal crashed")
@@ -176,7 +178,7 @@ def test_f05_no_gap_for_non_session_days_or_early_starts(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setenv("REMY_DATA_DIR", str(tmp_path))
-    monkeypatch.setattr(cli, "_sources", lambda no_events: pytest.fail("must not fetch"))
+    monkeypatch.setattr(cli, "_sources", lambda no_events, *_: pytest.fail("must not fetch"))
     _freeze(monkeypatch, datetime(2026, 11, 8, 15, 30, tzinfo=UTC))  # Sunday
     assert _take().exit_code == 2  # type: ignore[attr-defined]
     _freeze(monkeypatch, datetime(2026, 11, 6, 14, 30, tzinfo=UTC))  # Friday 09:30 ET, no --wait
@@ -191,7 +193,7 @@ def test_f05_late_rerun_after_success_records_no_gap(
     store = SnapshotStore(tmp_path / "snapshots")
     store.write(f.market_state(mode=Mode.PROSPECTIVE, as_of=FRI_1002_ET))
     _freeze(monkeypatch, FRI_1011_ET)
-    monkeypatch.setattr(cli, "_sources", lambda no_events: pytest.fail("must not fetch"))
+    monkeypatch.setattr(cli, "_sources", lambda no_events, *_: pytest.fail("must not fetch"))
     result = _take()
     assert result.exit_code == 2 and "already stored; no gap" in result.output  # type: ignore[attr-defined]
     assert not store.has_gap(DAY, Session.OPEN, SnapshotKind.DECISION)
