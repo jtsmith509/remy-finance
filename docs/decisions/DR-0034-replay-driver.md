@@ -1,6 +1,6 @@
 # DR-0034: Replay driver for the R1 replay month (R1.8)
 
-- **Status:** proposed
+- **Status:** accepted (confirmed by Josh, 2026-11-09: August 2026; full-universe tail boards, skipped on days when nothing can happen)
 - **Date:** 2026-11-09
 - **Source:** handoff §6 R1.8; DR-0033 (scheduler pipeline); EVAL-1 §1 and §4; power-estimate.md §5
 - **Stage:** R1.8
@@ -45,6 +45,6 @@ The brief asks for the full R1 pipeline over a historical range (such as one rec
   - the design-effect formula.
 - **Runbook:** `docs/runbook/scheduler.md`, the "replay month" section.
 
-## Questions for Josh
-1. **Replay month:** August 2026 (proposed: the latest whose 60-day tail ends before today), or an earlier one?
-2. **Tail boards (§3):** full-universe boards, skipped on days when nothing can happen (proposed)?
+## Questions for Josh (answered 2026-11-09)
+1. **Replay month:** August 2026 (proposed: the latest whose 60-day tail ends before today), or an earlier one? **August 2026.**
+2. **Tail boards (§3):** full-universe boards, skipped on days when nothing can happen (proposed)? **Yes.**

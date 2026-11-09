@@ -35,6 +35,6 @@
 | [DR-0031](DR-0031-rand1-details.md) | Random baseline RAND-1 details | R1.5 | accepted |
 | [DR-0032](DR-0032-forecast-records-eval1.md) | Forecast records for EVAL-1 scoring (amends DR-0030 §6) | R1 | accepted |
 | [DR-0033](DR-0033-scheduler.md) | Prospective scheduler design (one idempotent tick) | R1.6 | accepted |
-| [DR-0034](DR-0034-replay-driver.md) | Replay driver for the R1 replay month | R1.8 | proposed |
+| [DR-0034](DR-0034-replay-driver.md) | Replay driver for the R1 replay month | R1.8 | accepted |
 
 Each record has these sections: context, options considered, decision, consequences. Status stays *proposed* until Josh confirms it. A confirmed DR is superseded only by a new, linked DR; it is never edited in place.
