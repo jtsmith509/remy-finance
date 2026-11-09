@@ -21,6 +21,12 @@ universe_app = typer.Typer(help="Point-in-time universe UNIV-1 (R0.5).", no_args
 app.add_typer(universe_app, name="universe")
 registry_app = typer.Typer(help="Paper-trade registry (R1.1).", no_args_is_help=True)
 app.add_typer(registry_app, name="registry")
+run_app = typer.Typer(help="Scheduled jobs (R1.6).", no_args_is_help=True)
+app.add_typer(run_app, name="run")
+scheduler_app = typer.Typer(help="launchd set-up (R1.6).", no_args_is_help=True)
+app.add_typer(scheduler_app, name="scheduler")
+
+REPO_DIR = Path(__file__).resolve().parents[2]
 
 SymbolsOpt = Annotated[
     str,
@@ -452,6 +458,116 @@ def registry_backup(mode: ModeOpt = "prospective") -> None:
     with _open_registry(mode) as reg:
         dest = reg.backup(_data_dir() / "backup")
     typer.echo(f"backup written: {dest}")
+
+
+def _export_repo() -> Path | None:
+    value = os.environ.get("REMY_EXPORT_REPO", "").strip()
+    return Path(value) if value else None
+
+
+@run_app.command("tick")
+def run_tick() -> None:
+    """One idempotent scheduler tick (launchd runs this every minute; DR-0033)."""
+    from datetime import UTC
+
+    from remy_finance.data.thetadata import ThetaDataSource
+    from remy_finance.scheduler.live import live_capture
+    from remy_finance.scheduler.ops import code_commit, notify
+    from remy_finance.scheduler.tick import Tick
+
+    data = _data_dir()
+    tick = Tick(
+        data_dir=data,
+        capture=live_capture(data),
+        closes=ThetaDataSource(),
+        clock=lambda: datetime.now(UTC),
+        commit=lambda: code_commit(REPO_DIR, require_clean=True),
+        notify=notify,
+        export_repo=_export_repo(),
+    )
+    actions = tick.run()
+    if actions:
+        now = datetime.now(UTC)
+        log = data / "logs" / f"{now:%Y-%m-%d}.log"
+        log.parent.mkdir(parents=True, exist_ok=True)
+        with log.open("a", encoding="utf-8") as fh:
+            for a in actions:
+                fh.write(f"{now.isoformat()} {a}\n")
+        for a in actions:
+            typer.echo(a)
+
+
+@app.command()
+def doctor() -> None:
+    """Check the machine is ready for the prospective scheduler (exit 1 on any FAIL)."""
+    import subprocess
+    from datetime import UTC
+
+    from remy_finance.scheduler.doctor import Status, run_checks, terminal_probe
+
+    def tree_clean() -> bool | None:
+        try:
+            out = subprocess.run(
+                ["git", "-C", str(REPO_DIR), "status", "--porcelain", "--untracked-files=no"],
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+        except (OSError, subprocess.CalledProcessError):
+            return None
+        return out.stdout.strip() == ""
+
+    checks = run_checks(
+        _data_dir(),
+        datetime.now(UTC),
+        terminal_probe=terminal_probe(),
+        tree_clean=tree_clean,
+        export_repo=_export_repo(),
+    )
+    for c in checks:
+        typer.echo(f"{c.status.value:<4}  {c.name:<22} {c.detail}")
+    raise typer.Exit(1 if any(c.status is Status.FAIL for c in checks) else 0)
+
+
+@scheduler_app.command("plist")
+def scheduler_plist(
+    write: Annotated[
+        bool, typer.Option(help="Write it to ~/Library/LaunchAgents (otherwise print it)")
+    ] = False,
+    export_repo: Annotated[
+        str, typer.Option(help="Checkout of the registry-export branch (optional)")
+    ] = "",
+) -> None:
+    """Render the launchd job that runs `remy run tick` every minute."""
+    import shutil
+    from importlib.resources import files
+
+    uv = shutil.which("uv") or "/usr/local/bin/uv"
+    template = (
+        files("remy_finance.scheduler")
+        .joinpath("templates/com.remy-finance.tick.plist")
+        .read_text(encoding="utf-8")
+    )
+    data = _data_dir().resolve()
+    text = template.format(
+        uv=uv,
+        repo=REPO_DIR,
+        data_dir=data,
+        export_repo=export_repo,
+        theta_url=os.environ.get("THETA_TERMINAL_URL", "http://127.0.0.1:25503"),
+    )
+    if not write:
+        typer.echo(text)
+        return
+    dest = Path.home() / "Library" / "LaunchAgents" / "com.remy-finance.tick.plist"
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    (data / "logs").mkdir(parents=True, exist_ok=True)
+    dest.write_text(text, encoding="utf-8")
+    typer.echo(f"wrote {dest}")
+    typer.echo("load it with:")
+    typer.echo(f"  launchctl bootstrap gui/$(id -u) {dest}")
+    typer.echo("stop it with:")
+    typer.echo("  launchctl bootout gui/$(id -u)/com.remy-finance.tick")
 
 
 if __name__ == "__main__":

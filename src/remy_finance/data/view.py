@@ -17,17 +17,25 @@ from remy_finance.core import (
     CorporateAction,
     DividendEvent,
     LookaheadError,
+    OfficialClose,
     OptionContract,
     OptionQuote,
     OptionVolume,
     RatePoint,
     UnderlyingQuote,
 )
-from remy_finance.data.protocol import MarketDataSource
+from remy_finance.data.protocol import MarketDataSource, OfficialCloseSource
 from remy_finance.data.timeutil import et_date, require_aware
 
 T = TypeVar(
-    "T", OptionQuote, UnderlyingQuote, DividendEvent, CorporateAction, RatePoint, OptionVolume
+    "T",
+    OptionQuote,
+    UnderlyingQuote,
+    DividendEvent,
+    CorporateAction,
+    RatePoint,
+    OptionVolume,
+    OfficialClose,
 )
 
 
@@ -99,3 +107,20 @@ class PointInTimeView:
             )
         v = self._source.option_volume(underlying, session_date)
         return None if v is None else self._check_items((v,), f"option_volume({underlying})")[0]
+
+
+def official_close_as_of(
+    source: OfficialCloseSource, symbol: str, session_date: date, as_of: datetime
+) -> OfficialClose | None:
+    """Read an official close only if it was public at ``as_of`` (no look-ahead).
+
+    Unlike the view's other reads this filters rather than raises: our ``public_time`` for
+    a close is the vendor's report time (17:15 ET), so a close fetched earlier is simply
+    "not yet public" and is retried later, never used."""
+    require_aware(as_of)
+    if session_date > et_date(as_of):
+        raise LookaheadError(f"official_close({symbol}, {session_date}) requested at {as_of}")
+    close = source.official_close(symbol, session_date)
+    if close is None or close.public_time > as_of:
+        return None  # not public yet: the caller tries again later
+    return close

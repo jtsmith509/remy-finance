@@ -56,12 +56,19 @@ def underlying_of(c: Candidate) -> str:
     return c.legs[0].contract.underlying
 
 
-def underlyings_picked_today(registry: Registry, engine: str, day: date) -> frozenset[str]:
-    """Underlyings this baseline already recommended on ``day`` (ET), for the per-day cap."""
+def underlyings_picked_today(
+    registry: Registry, engine: str, day: date, before: datetime | None = None
+) -> frozenset[str]:
+    """Underlyings this baseline already recommended on ``day`` (ET), for the per-day cap.
+
+    With ``before``, only recommendations decided strictly earlier count. A re-run of a
+    snapshot's baseline then sees the same exclusions and reproduces the same picks."""
     return frozenset(
         underlying_of(r.candidate)
         for r in registry.recommendations()
-        if r.engine == engine and et_date(r.decision_time) == day
+        if r.engine == engine
+        and et_date(r.decision_time) == day
+        and (before is None or r.decision_time < before)
     )
 
 

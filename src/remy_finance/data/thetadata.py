@@ -23,6 +23,7 @@ import httpx
 from remy_finance.core import (
     CorporateAction,
     DividendEvent,
+    OfficialClose,
     OptionContract,
     OptionQuote,
     OptionVolume,
@@ -31,7 +32,14 @@ from remy_finance.core import (
     Right,
     UnderlyingQuote,
 )
-from remy_finance.data.timeutil import et_at, et_date, et_naive_to_utc, et_time_of_day, next_session
+from remy_finance.data.timeutil import (
+    et_at,
+    et_date,
+    et_naive_to_utc,
+    et_time_of_day,
+    next_session,
+    session_close,
+)
 
 NO_DATA = 472
 RATE_TENORS = {
@@ -249,6 +257,30 @@ class ThetaDataSource:
             public_time=published,
             ingest_time=self._clock(),
             source="thetadata:option/history/eod",
+        )
+
+    def official_close(self, symbol: str, session_date: date) -> OfficialClose | None:
+        """``stock/history/eod`` ``close`` (verified against the exchange's official close
+        for 33 of 33 sessions, R0.1 M6). Public at the EOD report time, 17:15 ET; the
+        event time is the session's close (16:00 ET, or the half-day close)."""
+        rows = self._get(
+            "/v3/stock/history/eod",
+            symbol=symbol,
+            start_date=_ymd(session_date),
+            end_date=_ymd(session_date),
+        )
+        price = next((r.get("close") for r in rows if r.get("close")), None)
+        if price is None:
+            return None
+        close_ts = session_close(session_date)
+        return OfficialClose(
+            symbol=symbol,
+            session_date=session_date,
+            price=Decimal(str(price)),
+            event_time=close_ts,
+            public_time=et_at(session_date, 17, 15),
+            ingest_time=self._clock(),
+            source="thetadata:stock/history/eod",
         )
 
     # ------------------------------------------------- live (prospective) only

@@ -44,6 +44,7 @@ from remy_finance.core import (
 )
 from remy_finance.data.thetadata import UnsupportedDataError
 from remy_finance.data.timeutil import NEW_YORK, et_at, et_date, next_session
+from remy_finance.secrets import secret
 
 DEFAULT_BASE_URL = "https://api.massive.com"
 EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
@@ -110,7 +111,7 @@ class MassiveSource:
         sleep: Callable[[float], None] = time.sleep,
         include_ticker_events: bool = True,
     ) -> None:
-        key = api_key or os.environ.get("MASSIVE_API_KEY") or os.environ.get("POLYGON_API_KEY")
+        key = api_key or secret("MASSIVE_API_KEY") or os.environ.get("POLYGON_API_KEY")
         if not key:
             raise MassiveError(None, "MASSIVE_API_KEY is not set")
         url = (

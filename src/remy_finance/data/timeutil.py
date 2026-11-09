@@ -51,3 +51,15 @@ def next_session(d: date) -> date:
     """The first XNYS session strictly after ``d``."""
     nxt = xnys().date_to_session((d + timedelta(days=1)).isoformat(), direction="next")
     return date(nxt.year, nxt.month, nxt.day)
+
+
+def session_close(d: date) -> datetime:
+    """The XNYS close of session ``d`` as aware UTC (16:00 ET, earlier on half days)."""
+    ts = xnys().session_close(d.isoformat())
+    return datetime.fromtimestamp(ts.timestamp(), tz=UTC)
+
+
+def previous_session(d: date) -> date:
+    """The last XNYS session strictly before ``d``."""
+    prv = xnys().date_to_session((d - timedelta(days=1)).isoformat(), direction="previous")
+    return date(prv.year, prv.month, prv.day)

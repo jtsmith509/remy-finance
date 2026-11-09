@@ -17,6 +17,7 @@ from pathlib import Path
 from remy_finance.core import (
     CorporateAction,
     DividendEvent,
+    OfficialClose,
     OptionContract,
     OptionQuote,
     OptionVolume,
@@ -50,6 +51,7 @@ class FixtureSource:
         self._ca: list[CorporateAction] = []
         self._rates: list[RatePoint] = []
         self._volume: dict[tuple[str, date], OptionVolume] = {}
+        self._close: dict[tuple[str, date], OfficialClose] = {}
         for r in records:
             self.add(r)
 
@@ -70,6 +72,8 @@ class FixtureSource:
             self._rates.append(record)
         elif isinstance(record, OptionVolume):
             self._volume[(record.symbol, record.session_date)] = record
+        elif isinstance(record, OfficialClose):
+            self._close[(record.symbol, record.session_date)] = record
         else:
             raise TypeError(f"FixtureSource cannot store {type(record).__name__}")
 
@@ -146,3 +150,6 @@ class FixtureSource:
 
     def option_volume(self, underlying: str, session_date: date) -> OptionVolume | None:
         return self._volume.get((underlying, session_date))
+
+    def official_close(self, symbol: str, session_date: date) -> OfficialClose | None:
+        return self._close.get((symbol, session_date))

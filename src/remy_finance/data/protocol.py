@@ -13,6 +13,7 @@ from typing import Protocol, runtime_checkable
 from remy_finance.core import (
     CorporateAction,
     DividendEvent,
+    OfficialClose,
     OptionContract,
     OptionQuote,
     OptionVolume,
@@ -46,4 +47,13 @@ class MarketDataSource(Protocol):
 
     def option_volume(self, underlying: str, session_date: date) -> OptionVolume | None:
         """Total option volume for one completed session (UNIV-1 extension, DR-0023)."""
+        ...
+
+
+@runtime_checkable
+class OfficialCloseSource(Protocol):
+    """Official closing prices for EXP-1 settlement (DR-0026: ThetaData stock EOD)."""
+
+    def official_close(self, symbol: str, session_date: date) -> OfficialClose | None:
+        """The session's official close, or None if not (yet) published."""
         ...
