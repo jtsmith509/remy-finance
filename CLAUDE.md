@@ -33,4 +33,4 @@ If the brief and the spec disagree, **stop and ask Josh**. Don't resolve it your
 
 - Current stage: **R1 in progress.** Stop Point B closed 2026-11-09 (`docs/memos/R0-result.md`). The next hard stop is **Stop Point C** at the end of R1.
 - Agreed for R1: optimize the move generator early, keeping DR-0025's exactness. Draft the spec §11 power estimate and the pre-registered scoring document for Josh's approval **before** the 5-day prospective live run.
-- DR-0001 to DR-0027 are **accepted** (2026-11-08). Change them only through new, linked DRs.
+- DR-0001 to DR-0027 are **accepted** (2026-11-08); DR-0028 accepted 2026-11-09. Change them only through new, linked DRs.

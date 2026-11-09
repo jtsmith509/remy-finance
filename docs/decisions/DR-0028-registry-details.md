@@ -1,6 +1,6 @@
 # DR-0028: Registry implementation details REGISTRY-1
 
-- **Status:** proposed
+- **Status:** accepted (confirmed by Josh, 2026-11-09: mode-folder export, per-table chains, derived trade IDs, order rules enforced on write, null decisions in a per-run decision log)
 - **Date:** 2026-11-09
 - **Source:** handoff §6 R1.1, D12; spec §11; DR-0012 (registry backup)
 - **Stage:** R1.1
