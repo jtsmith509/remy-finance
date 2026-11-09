@@ -178,7 +178,8 @@ class Candidate(Record):
             return self
         if self.structure_type is None:
             raise ValueError("a non-null candidate needs a structure_type")
-        payoff.payoff_extremes(self.legs, payoff.ZERO)  # defined-risk check from legs alone
+        if self.structure is None:  # a priced Structure has already checked these legs
+            payoff.payoff_extremes(self.legs, payoff.ZERO)  # defined risk from legs alone
         if self.priceability is Priceability.PRICED:
             if self.unpriceable_reason is not None:
                 raise ValueError("PRICED candidates must not carry an unpriceable_reason")

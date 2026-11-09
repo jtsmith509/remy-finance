@@ -34,6 +34,7 @@ from remy_finance.core import (
     Side,
     Structure,
     StructureType,
+    canonical,
 )
 from remy_finance.execution.fill import FILL_1, FillRule
 from remy_finance.movegen.config import MOVEGEN_1, SIZE_1, MovegenConfig, SizingRule
@@ -68,9 +69,12 @@ class MovegenSummary(Record):
 
 
 def list_hash(candidates: tuple[Candidate, ...]) -> str:
+    """SHA-256 over the ordered candidate content hashes. One canonical memo is shared, so
+    contracts and legs reused across candidates are serialized once (same bytes, faster)."""
     h = hashlib.sha256()
+    memo: canonical.Memo = {}
     for c in candidates:
-        h.update(c.content_hash().encode("ascii"))
+        h.update(canonical.content_hash(c, memo).encode("ascii"))
         h.update(b"\n")
     return h.hexdigest()
 

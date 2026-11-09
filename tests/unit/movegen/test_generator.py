@@ -172,3 +172,15 @@ def test_list_hash_changes_with_inputs() -> None:
     base = tuple(oq(k, r, ask="1.11" if k == D(100) else "1.10") for k in STRIKES for r in Right)
     _, s2 = generate(board(base=base))
     assert s1.list_hash != s2.list_hash and s1.snapshot_id != s2.snapshot_id
+
+
+def test_list_hash_with_shared_memo_equals_plain_hash() -> None:
+    """The canonical memo used by list_hash is a speed-up only: same bytes, same hash."""
+    import hashlib
+
+    cands, summary = generate(board())
+    plain = hashlib.sha256()
+    for c in cands:
+        plain.update(c.content_hash().encode("ascii"))
+        plain.update(b"\n")
+    assert summary.list_hash == plain.hexdigest()

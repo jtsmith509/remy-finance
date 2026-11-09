@@ -54,12 +54,21 @@ def type_tag(model: type[BaseModel]) -> str:
     return f"{model.__name__}@{version}"
 
 
-def to_canonical(value: Any) -> Any:
-    """Convert a value into plain JSON-compatible data following CANON-1."""
+Memo = dict[int, tuple[Any, Any]]
+"""id(model) -> (model, canonical data). Keeping the model alive pins its id for the call."""
+
+
+def to_canonical(value: Any, memo: Memo | None = None) -> Any:
+    """Convert a value into plain JSON-compatible data following CANON-1.
+
+    ``memo`` (optional) caches the canonical form of each pydantic model *instance* for the
+    duration of one caller's work, so models shared across many records (contracts, legs)
+    are converted once. Records are immutable, so a cached form never goes stale.
+    """
     if value is None or isinstance(value, bool | str):
         return value
     if isinstance(value, Enum):
-        return to_canonical(value.value)
+        return to_canonical(value.value, memo)
     if isinstance(value, int):
         return value
     if isinstance(value, float):
@@ -71,20 +80,24 @@ def to_canonical(value: Any) -> Any:
     if isinstance(value, date):
         return value.isoformat()
     if isinstance(value, BaseModel):
-        out = {name: to_canonical(getattr(value, name)) for name in type(value).model_fields}
+        if memo is not None and id(value) in memo:
+            return memo[id(value)][1]
+        out = {name: to_canonical(getattr(value, name), memo) for name in type(value).model_fields}
         out[TYPE_TAG] = type_tag(type(value))
+        if memo is not None:
+            memo[id(value)] = (value, out)
         return out
     if isinstance(value, Mapping):
         result: dict[str, Any] = {}
         for k, v in value.items():
             if not isinstance(k, str):
                 raise TypeError(f"canonical object keys must be str, got {k!r}")
-            result[k] = to_canonical(v)
+            result[k] = to_canonical(v, memo)
         return result
     if isinstance(value, tuple | list):
-        return [to_canonical(v) for v in value]
+        return [to_canonical(v, memo) for v in value]
     if isinstance(value, set | frozenset):
-        items = [to_canonical(v) for v in value]
+        items = [to_canonical(v, memo) for v in value]
         return sorted(items, key=dumps)
     raise TypeError(f"type {type(value).__name__} is not canonically serializable")
 
@@ -96,13 +109,13 @@ def dumps(data: Any) -> str:
     )
 
 
-def canonical_json(value: Any) -> str:
-    return dumps(to_canonical(value))
+def canonical_json(value: Any, memo: Memo | None = None) -> str:
+    return dumps(to_canonical(value, memo))
 
 
 def sha256_hex(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
-def content_hash(value: Any) -> str:
-    return sha256_hex(canonical_json(value))
+def content_hash(value: Any, memo: Memo | None = None) -> str:
+    return sha256_hex(canonical_json(value, memo))

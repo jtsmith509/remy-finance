@@ -22,12 +22,29 @@ class UndefinedRiskError(ValueError):
     """The structure's loss is unbounded (or not computable at entry): rejected."""
 
 
+# The _raw helpers do no context handling: callers run them inside one exact_decimal
+# context (DR-0025). Opening a context per elementary operation cost ~4x in movegen.
+
+
+def _intrinsic_raw(right: Right, strike: Decimal, s: Decimal) -> Decimal:
+    return max(s - strike, ZERO) if right is Right.CALL else max(strike - s, ZERO)
+
+
+def _leg_payoff_raw(leg: Leg, s: Decimal) -> Decimal:
+    c = leg.contract
+    return int(leg.side) * leg.ratio * c.multiplier * _intrinsic_raw(c.right, c.strike, s)
+
+
+def _terminal_payoff_raw(legs: Sequence[Leg], s: Decimal) -> Decimal:
+    return sum((_leg_payoff_raw(leg, s) for leg in legs), ZERO)
+
+
 def intrinsic(right: Right, strike: Decimal, s: Decimal) -> Decimal:
     """Per-share intrinsic value at expiry: max(S-K, 0) for calls, max(K-S, 0) for puts."""
     if s < 0:
         raise ValueError("underlying price must be >= 0")
     with exact_decimal(s, strike):
-        return max(s - strike, ZERO) if right is Right.CALL else max(strike - s, ZERO)
+        return _intrinsic_raw(right, strike, s)
 
 
 def strikes_of(legs: Sequence[Leg]) -> list[Decimal]:
@@ -35,15 +52,18 @@ def strikes_of(legs: Sequence[Leg]) -> list[Decimal]:
 
 
 def leg_payoff(leg: Leg, s: Decimal) -> Decimal:
-    c = leg.contract
-    with exact_decimal(s, c.strike):
-        return int(leg.side) * leg.ratio * c.multiplier * intrinsic(c.right, c.strike, s)
+    if s < 0:
+        raise ValueError("underlying price must be >= 0")
+    with exact_decimal(s, leg.contract.strike):
+        return _leg_payoff_raw(leg, s)
 
 
 def terminal_payoff(legs: Sequence[Leg], s: Decimal) -> Decimal:
     """Sum of leg payoffs at S_T = s (before premiums and fees), computed exactly."""
+    if s < 0:
+        raise ValueError("underlying price must be >= 0")
     with exact_decimal(s, *strikes_of(legs)):
-        return sum((leg_payoff(leg, s) for leg in legs), ZERO)
+        return _terminal_payoff_raw(legs, s)
 
 
 def net_premium(legs: Sequence[Leg], prices: Sequence[Decimal]) -> Decimal:
@@ -88,8 +108,8 @@ def payoff_extremes(legs: Sequence[Leg], premium: Decimal) -> tuple[Decimal, Dec
     slope = slope_above_highest_strike(legs)
     if slope < 0:
         raise UndefinedRiskError(f"loss is unbounded as S_T -> inf (slope {slope} per $1)")
-    with exact_decimal(premium, *strikes_of(legs)):
-        values = [terminal_payoff(legs, s) - premium for s in evaluation_points(legs)]
+    with exact_decimal(premium, *strikes_of(legs)):  # one context for the whole evaluation
+        values = [_terminal_payoff_raw(legs, s) - premium for s in evaluation_points(legs)]
     low = min(values)
     high: Decimal | None = None if slope > 0 else max(values)
     return low, high
