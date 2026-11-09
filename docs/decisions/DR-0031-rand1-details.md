@@ -1,6 +1,6 @@
 # DR-0031: Random baseline RAND-1 details
 
-- **Status:** proposed
+- **Status:** accepted (confirmed by Josh, 2026-11-09: RAND-1 uses MKT-1's forecasts)
 - **Date:** 2026-11-09
 - **Source:** handoff §6 R1.5; DR-0007 (SELECT-1), DR-0030 (MKT-1)
 - **Stage:** R1.5
@@ -34,5 +34,5 @@ Code: `src/remy_finance/baselines/rand1.py`.
 - **Reproducible:** the same board and the same earlier picks give byte-identical recommendations and an identical run log. A different snapshot gives a different draw.
 - **Implicit weighting:** an underlying with more candidates is somewhat more likely to be drawn first. This follows from sampling *candidates* uniformly, as the brief specifies, rather than sampling underlyings.
 
-## Questions for Josh
-1. **Forecast source:** RAND-1 uses MKT-1's forecasts (proposed), so the two baselines differ only in selection. Agree?
+## Questions for Josh (answered 2026-11-09)
+1. **Forecast source:** RAND-1 uses MKT-1's forecasts (proposed), so the two baselines differ only in selection. Agree? **Yes.**
