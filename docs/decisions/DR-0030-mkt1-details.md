@@ -1,6 +1,6 @@
 # DR-0030: Market-implied baseline MKT-1 details
 
-- **Status:** proposed
+- **Status:** accepted (confirmed by Josh, 2026-11-09: bug signals logged and excluded; $0.05 mid floor)
 - **Date:** 2026-11-09
 - **Source:** handoff §6 R1.4; DR-0006 (SIZE-1), DR-0007 (SELECT-1), DR-0010 (HOLD-1), DR-0016 (canonical serialization), DR-0025 (exact Decimal)
 - **Stage:** R1.4
@@ -53,6 +53,6 @@ The brief fixes the method: parity forward and discount factor, OTM implied vols
   - The American early-exercise premium is ignored. This is flagged on every run; it matters for deep in-the-money puts and for calls before dividends.
   - Only same-expiration structures are scored, which is all MOVEGEN-1 produces.
 
-## Questions for Josh
-1. **Bug signals.** Exclude a predicted mean above +5% from selection (proposed), or record it like any other pick and only flag it? Excluding stops MKT-1 from systematically picking fit artifacts. The cost is that a genuine mispricing could never be selected; the baseline isn't meant to find those anyway.
-2. **Mid floor for the fit:** is $0.05 acceptable? It's configurable and versioned with MKT-1.
+## Questions for Josh (answered 2026-11-09)
+1. **Bug signals.** Exclude a predicted mean above +5% from selection (proposed), or record it like any other pick and only flag it? Excluding stops MKT-1 from systematically picking fit artifacts. The cost is that a genuine mispricing could never be selected; the baseline isn't meant to find those anyway. **Log and exclude.**
+2. **Mid floor for the fit:** is $0.05 acceptable? It's configurable and versioned with MKT-1. **Yes, $0.05.**

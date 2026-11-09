@@ -31,6 +31,6 @@
 | [DR-0027](DR-0027-schedule-declared-dividends.md) | Schedule-declared dividends public on the ex-date (amends DR-0014) | R0.1 ext. | accepted |
 | [DR-0028](DR-0028-registry-details.md) | Registry implementation details REGISTRY-1 | R1.1 | accepted |
 | [DR-0029](DR-0029-fill-engine.md) | Paper fill engine details (forced close, gaps, per-leg fills) | R1.2 | accepted |
-| [DR-0030](DR-0030-mkt1-details.md) | Market-implied baseline MKT-1 details | R1.4 | proposed |
+| [DR-0030](DR-0030-mkt1-details.md) | Market-implied baseline MKT-1 details | R1.4 | accepted |
 
 Each record has these sections: context, options considered, decision, consequences. Status stays *proposed* until Josh confirms it. A confirmed DR is superseded only by a new, linked DR; it is never edited in place.
