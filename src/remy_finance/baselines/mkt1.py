@@ -276,6 +276,73 @@ class Scored:
 
 
 VrpHook = Callable[[ExpiryModel], ExpiryModel]
+MKT1_METHOD = "MKT-1: SVI smile, Breeden-Litzenberger, undiscounted at expiration"
+
+
+@dataclass(frozen=True)
+class BoardScore:
+    """MKT-1's view of one board: fits, and every scorable candidate's predicted mean."""
+
+    cfg: Mkt1Config
+    usable: tuple[Candidate, ...]
+    models: dict[tuple[str, date], ExpiryModel | None]
+    fits: tuple[ExpirationFit, ...]
+    scored: tuple[Scored, ...]  # in candidate order; bug signals excluded
+    bug_signals: tuple[tuple[str, Decimal], ...]
+
+    def model_for(self, c: Candidate) -> ExpiryModel:
+        model = self.models[(underlying_of(c), c.legs[0].contract.expiration)]
+        assert model is not None
+        return model
+
+    def forecast(
+        self, s: Scored
+    ) -> tuple[Decimal, list[tuple[Decimal, Decimal]], list[tuple[str, Decimal]]]:
+        quantiles, tails = return_distribution(
+            self.model_for(s.candidate), s.candidate, self.cfg.return_places
+        )
+        return to_decimal_places(s.mean, self.cfg.return_places), quantiles, tails
+
+
+def score_board(
+    board: MarketState,
+    candidates: Sequence[Candidate],
+    cfg: Mkt1Config = MKT_1,
+    vrp_hook: VrpHook | None = None,
+) -> BoardScore:
+    if cfg.vrp_adjustment != "OFF" or vrp_hook is not None:
+        raise NotImplementedError("the volatility-risk-premium adjustment is R2 work")
+    usable = [c for c in candidates if recommendable(c)]
+    models: dict[tuple[str, date], ExpiryModel | None] = {}
+    fits: list[ExpirationFit] = []
+    for c in usable:
+        key = (underlying_of(c), c.legs[0].contract.expiration)
+        if key not in models:
+            model, fit = fit_expiration(board, key[0], key[1], cfg)
+            models[key] = model
+            fits.append(fit)
+    cache: VanillaCache = {}
+    scored: list[Scored] = []
+    bug_signals: list[tuple[str, Decimal]] = []
+    for i, c in enumerate(usable):
+        model = models[(underlying_of(c), c.legs[0].contract.expiration)]
+        if model is None:
+            continue
+        mean = expected_return(model, c, cache)
+        if mean > float(cfg.bug_signal_return):
+            bug_signals.append((c.content_hash(), to_decimal_places(mean, cfg.return_places)))
+            continue
+        scored.append(Scored(c, mean, i))
+    return BoardScore(cfg, tuple(usable), models, tuple(fits), tuple(scored), tuple(bug_signals))
+
+
+def shortfall_note(n: int, k: int, score: BoardScore, excluded: frozenset[str]) -> str:
+    if n >= k:
+        return ""
+    return (
+        f"{n} of {k}: {len(score.usable)} recommendable, {len(score.scored)} scored, "
+        f"{len(excluded)} underlyings already used today"
+    )
 
 
 def run_mkt1(
@@ -289,41 +356,14 @@ def run_mkt1(
     vrp_hook: VrpHook | None = None,
 ) -> tuple[list[Recommendation], BaselineRun]:
     """Score every recommendable candidate on ``board`` and pick MKT-1's recommendations."""
-    if cfg.vrp_adjustment != "OFF" or vrp_hook is not None:
-        raise NotImplementedError("the volatility-risk-premium adjustment is R2 work")
-    usable = [c for c in candidates if recommendable(c)]
-    models: dict[tuple[str, date], ExpiryModel | None] = {}
-    fits: list[ExpirationFit] = []
-    for c in usable:
-        key = (underlying_of(c), c.legs[0].contract.expiration)
-        if key not in models:
-            model, fit = fit_expiration(board, key[0], key[1], cfg)
-            models[key] = model
-            fits.append(fit)
-
-    cache: VanillaCache = {}
-    scored: list[Scored] = []
-    bug_signals: list[tuple[str, Decimal]] = []
-    for i, c in enumerate(usable):
-        model = models[(underlying_of(c), c.legs[0].contract.expiration)]
-        if model is None:
-            continue
-        mean = expected_return(model, c, cache)
-        if mean > float(cfg.bug_signal_return):
-            bug_signals.append((c.content_hash(), to_decimal_places(mean, cfg.return_places)))
-            continue
-        scored.append(Scored(c, mean, i))
-    scored.sort(key=lambda s: (-s.mean, s.index))
-    by_hash = {id(s.candidate): s for s in scored}
-    picks = apply_caps((s.candidate for s in scored), cfg.selection, excluded_underlyings)
-
+    score = score_board(board, candidates, cfg, vrp_hook)
+    ranked = sorted(score.scored, key=lambda s: (-s.mean, s.index))
+    by_id = {id(s.candidate): s for s in ranked}
+    picks = apply_caps((s.candidate for s in ranked), cfg.selection, excluded_underlyings)
     recs: list[Recommendation] = []
     artifact = cfg.content_hash()
     for rank, c in enumerate(picks, start=1):
-        sc = by_hash[id(c)]
-        model = models[(underlying_of(c), c.legs[0].contract.expiration)]
-        assert model is not None
-        quantiles, tails = return_distribution(model, c, cfg.return_places)
+        mean, quantiles, tails = score.forecast(by_id[id(c)])
         recs.append(
             build_recommendation(
                 candidate=c,
@@ -334,8 +374,8 @@ def run_mkt1(
                 artifact_hash=artifact,
                 receipt_time=receipt_time,
                 rank=rank,
-                method="MKT-1: SVI smile, Breeden-Litzenberger, undiscounted at expiration",
-                mean=to_decimal_places(sc.mean, cfg.return_places),
+                method=MKT1_METHOD,
+                mean=mean,
                 quantiles=quantiles,
                 tail_measures=tails,
                 search_config=(
@@ -345,12 +385,7 @@ def run_mkt1(
                 ),
             )
         )
-    shortfall = ""
-    if len(recs) < cfg.selection.k:
-        shortfall = (
-            f"{len(recs)} of {cfg.selection.k}: {len(usable)} recommendable, "
-            f"{len(scored)} scored, {len(excluded_underlyings)} underlyings already used today"
-        )
+    shortfall = shortfall_note(len(recs), cfg.selection.k, score, excluded_underlyings)
     run = BaselineRun(
         engine=cfg.version,
         engine_version=cfg.engine_version,
@@ -361,13 +396,13 @@ def run_mkt1(
         recorded_at=receipt_time,
         movegen_list_hash=list_hash(tuple(candidates)),
         n_candidates=len(candidates),
-        n_recommendable=len(usable),
-        n_scored=len(scored),
+        n_recommendable=len(score.usable),
+        n_scored=len(score.scored),
         excluded_underlyings=tuple(sorted(excluded_underlyings)),
         selected=tuple(r.trade_id for r in recs),
         shortfall=shortfall,
-        fits=tuple(fits),
-        bug_signals=tuple(bug_signals),
+        fits=score.fits,
+        bug_signals=score.bug_signals,
         flags=("AMERICAN_EXERCISE_PREMIUM_IGNORED",),
     )
     return recs, run
