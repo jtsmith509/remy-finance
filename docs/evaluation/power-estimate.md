@@ -1,6 +1,6 @@
 # Power estimate for prospective paper trading (spec §11)
 
-- **Status:** draft for Josh's approval, required **before** the 5-day prospective live run
+- **Status:** approved by Josh, 2026-11-09 (base case with the sensitivity ranges; replay-month update before the live run)
 - **Date:** 2026-11-09
 - **Version:** EVAL-1 (goes with `EVAL-1-scoring.md`)
 - **Reproduce:** `uv run python scripts/power_estimate.py`. The formulas are in `src/remy_finance/reports/power.py`, with tests.
@@ -85,6 +85,6 @@ Tail exceedances are assumed to share the same correlation as returns. Crashes h
 - **The update rule:** re-run the script with the measured values, record the result here as a dated addendum, and leave the original table unchanged.
 - **A replay number is a planning input only.** Replay outcomes are never evidence of edge.
 
-## 6. Questions for Josh
-1. Are the base assumptions acceptable as the recorded prior (fill rate 70%, σ = 0.7, ρ = 0.10)? Or should the range in §3 be the recorded estimate, with ρ = 0.10 as the central case?
-2. Should the replay-month update (§5) happen before the live run starts, as proposed, or at Stop Point C?
+## 6. Questions for Josh (answered 2026-11-09)
+1. Are the base assumptions acceptable as the recorded prior (fill rate 70%, σ = 0.7, ρ = 0.10)? Or should the range in §3 be the recorded estimate, with ρ = 0.10 as the central case? **The base case is the centre and the §3 ranges are part of the recorded estimate.**
+2. Should the replay-month update (§5) happen before the live run starts, as proposed, or at Stop Point C? **Before the live run.**

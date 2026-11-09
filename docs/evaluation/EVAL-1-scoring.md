@@ -1,6 +1,6 @@
 # EVAL-1: Pre-registered evaluation and scoring protocol
 
-- **Status:** draft for Josh's approval, required **before** the 5-day prospective live run
+- **Status:** **approved by Josh, 2026-11-09. Frozen**: changes only through EVAL-2. The record changes in §6 must be in place before the live run.
 - **Date:** 2026-11-09
 - **Source:** spec §11, "Tournament protocol" and "Pre-registered metrics and statistical power"; handoff R1.7 (reports); the power estimate in `power-estimate.md`
 - **Applies to:** every engine and baseline that writes to the registry, starting with MKT-1 and RAND-1
@@ -91,9 +91,9 @@ The metrics in §2 need more than the five quantiles MKT-1 records today (DR-003
 - **Code commits.** Reports print the code commit of every engine whose records they score. Records from a different engine version are reported as separate groups, never silently pooled.
 - **Post-hoc analyses** are labelled post hoc wherever they appear: tables, charts and memos.
 
-## 8. Questions for Josh
-1. **Primary hypotheses:** are P1 (MKT-1 forecast bias) and P2 (MKT-1 selection versus random) the right two confirmatory tests for R1's baselines? Or should either be descriptive only, leaving the confirmatory slots for later engines?
-2. **Confirmatory schedule:** 12 months after the first approved prospective record, then yearly. Shorter would mean testing with almost no power (see the power estimate, §3.4).
-3. **Record changes (§6):** approve 15 quantile levels, categorical bins and the risk-neutral quantiles in the run log, to be added through a new DR before the live run?
-4. **The 5-day live run:** should its records count as prospective evidence under EVAL-1 (proposed, provided the protocol is approved first), or be treated as a dry run and excluded?
-5. **Clusters:** is the ISO week of expiration acceptable, or should clusters be wider, for example the calendar month of expiration, which is more conservative?
+## 8. Questions for Josh (answered 2026-11-09)
+1. **Primary hypotheses:** are P1 (MKT-1 forecast bias) and P2 (MKT-1 selection versus random) the right two confirmatory tests for R1's baselines? Or should either be descriptive only, leaving the confirmatory slots for later engines? **P1 and P2, both confirmatory, with Holm.**
+2. **Confirmatory schedule:** 12 months after the first approved prospective record, then yearly. Shorter would mean testing with almost no power (see the power estimate, §3.4). **12 months, then yearly.**
+3. **Record changes (§6):** approve 15 quantile levels, categorical bins and the risk-neutral quantiles in the run log, to be added through a new DR before the live run? **Approved: all three, through a new DR linked to DR-0030.**
+4. **The 5-day live run:** should its records count as prospective evidence under EVAL-1 (proposed, provided the protocol is approved first), or be treated as a dry run and excluded? **They count as prospective evidence; the clock starts at the first live record.**
+5. **Clusters:** is the ISO week of expiration acceptable, or should clusters be wider, for example the calendar month of expiration, which is more conservative? **ISO week of expiration.**
