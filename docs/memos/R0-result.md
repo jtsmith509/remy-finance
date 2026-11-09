@@ -1,10 +1,18 @@
-# R0 result: data and correctness (Stop Point B, pending live runs)
+# R0 result: data and correctness (Stop Point B: ready for sign-off)
 
 - **Stage:** R0 (handoff §5)
-- **Date:** 2026-11-08
+- **Date:** 2026-11-08, with the live runs completed 2026-11-09
 - **Branch:** `claude/cool-pascal-80kptn`
 
-> **Status:** all R0 code is written and the offline gate is green. Three items in the R0 definition of done are **live runs on the Mac mini** that this build environment can't perform: a replay snapshot, a live prospective snapshot, and Polygon verification. The commands are listed under *Remaining before Stop Point B closes*. This memo will be updated with their results.
+> **Status:** every item in the R0 definition of done is met.
+> - **Tests:** all pass (**309**, offline), with ruff, format and mypy clean; CI runs the same gate on every push.
+> - **Look-ahead:** the guard is tested to raise on every read path.
+> - **Snapshots:** a replay snapshot was built for a past date (with dividends), and a **live prospective snapshot** was taken on 2026-11-09.
+> - **Determinism:** candidate generation is deterministic.
+> - **Decision records:** all are written and accepted (DR-0001 to DR-0027).
+> - **Independent review:** an independent review (Codex) found 8 defects, and all are fixed with regression tests.
+>
+> **R1 has not started.** It waits for Josh's confirmation.
 
 ## What was built
 
@@ -23,7 +31,7 @@
 
 ## Test results (offline, no network)
 
-`ruff check`, `ruff format --check` and `mypy` (strict on `core` and `registry`) are all clean. **pytest: 247 passed.**
+`ruff check`, `ruff format --check` and `mypy` (strict on `core` and `registry`) are all clean. **pytest: 309 passed** at sign-off. The table below is the breakdown from the first R0 pass, at 247 tests. Since then, the review regression tests (`tests/unit/review`), the Massive adapter and check, the CLI integration tests and the fixture-week test (`tests/integration`) have been added. CI runs the same gate on every push.
 
 | Area | Tests | Highlights |
 |---|---|---|
@@ -44,18 +52,29 @@
 ## Measured performance
 - **Move generator:** a synthetic SPY-sized board (22k quotes, 30 expirations) gives about 37.5k candidates in about 8 s. **On the real 50-name board: 260,806 candidates in 18.2 s** (see *Live runs*).
 - **Hashing:** a 22k-quote board hashes in about 0.5 s.
-- Both will be re-measured on real boards in the live R0.4 run (`--movegen`).
+- **Live boards:** a 50-name board is about 160k quotes.
+  - **Replay:** built in 38–46 s.
+  - **Live prospective:** stored about 18–20 s after the scheduled time.
+  - **Massive prefetch:** 4 requests (38 s).
+- **The move generator slowed after DR-0025:** 18.2 s on Sunday's board, and **56–71 s** since the exact-arithmetic change. That doesn't affect the window, because boards are stored before generation. It's an R1 optimization item.
 
 ## Known limitations
-- **Live runs pending** (see below). The R0.3/R0.4/R0.5 adapters are tested only against mocked HTTP, so far.
 - **Survivorship bias** remains in the 2026-chosen candidate list (DR-0004/0023).
 - **Under-assignment near the money:** ASSIGN-1 uses the underlying mid. A leg in the money by less than half the underlying spread may be under-assigned (DR-0019).
 - **Strike lattice:** DR-0020's lattice skips strikes between grid points, so SPY uses \$10 steps.
 - **Prospective job timing:** a prospective board must be taken within 10 minutes of its scheduled time, or the slot becomes a gap (DR-0022).
 - **Splits:** they're only known on their execution date (DR-0021). Adjusted roots are still excluded by the OSI rule.
+- **ETF dividends:** schedule-declared distributions (e.g. SPY) only become public on their ex-date (DR-0027). So the ASSIGN-1 dividend rule can't fire for such ETFs; the extrinsic-value threshold rule still applies.
+- **Snapshot boards skip ticker-change events.** There's no batched Massive endpoint for them; the data check covers them.
+- **Theta Terminal network exposure:** the Terminal listens on all interfaces. The macOS firewall now blocks other devices (verified), and this must be re-checked after Java upgrades (R0.1 memo).
 
 ## Decision records
-**DR-0016 to DR-0023 were accepted by Josh on 2026-11-08**, including DR-0020's strike lattice as proposed. All 23 decision records are now accepted.
+**All 27 decision records are accepted** (DR-0001 to DR-0027, 2026-11-08):
+- **DR-0016 to DR-0023:** R0 design.
+- **DR-0024 and DR-0025:** fixes from the independent review.
+- **DR-0026 and DR-0027:** the per-type data sources, and SPY-style schedule-declared dividends.
+
+None are awaiting confirmation.
 
 ## Live runs on the Mac mini
 
@@ -119,17 +138,15 @@ Codex reviewed commit `aeda0c2` against `docs/review/R0-review-brief.md` and fou
 - **Move generator:** 238,717 candidates (213,612 priced, 25,104 unpriceable, 17,988 quantity 0), list hash `06172c89d1da9885…`, in **56.0 s**.
 - **Performance note:** 56 s is about 3× Sunday's 18.2 s on a comparable board. That's attributable to the exact-arithmetic contexts added for review finding F04 (DR-0025). It doesn't affect the prospective window, because the decision board is stored before candidates are generated. Profiling and optimizing it is listed for R1.
 
-## Remaining before Stop Point B closes (on the Mac mini)
-```bash
-cd ~/remy-finance && git pull && uv sync
-# MASSIVE_API_KEY loaded from the macOS keychain (see the R0.1 memo)
-uv run python scripts/verify_massive.py                         # DONE 2026-11-08: M6 closes 33/33 (DR-0010 spot-check); see R0.1 memo
-uv run remy universe build --month 2026-11                      # DONE 2026-11-08 (see above)
-uv run remy snapshot build --date 2026-11-06 --session open --movegen     # DONE with --no-events (see above); redo with events after Polygon
-# On a trading day, between 10:00 and 10:10 ET:
-uv run remy snapshot take --session open --with-execution --no-events --movegen --wait   # Mon 2026-11-09, start ~09:55 ET
-uv run remy snapshot verify                                      # DONE 2026-11-08 (2 OK); re-run after Monday
-```
+**Live prospective snapshot: `remy snapshot take --session open --with-execution --movegen --wait`** (Monday 2026-11-09): **OK.** [Log](evidence/R0-live-take-20261109.log).
+- **Massive prefetch:** 50 symbols in **4 requests (38 s)**, done before the wait.
+- **DECISION** `c8476d2c96ee7d4b`: as_of **10:00:18 ET**, 160,468 quotes, **0 notes**.
+- **EXECUTION** `cf5e38b148e64f15`: as_of **10:05:20 ET**, 160,468 quotes, 0 notes, linked to the decision board.
+- **Timing:** both landed about 20 s after their scheduled times, well inside the 10-minute window (DR-0022), and no gap was recorded.
+- **Move generator:** 245,490 candidates (226,052 priced, 19,437 unpriceable, 19,387 quantity 0) in 70.9 s, with list hash `fab52c21b72fba66…`. This ran after the decision board was stored.
 
-## Remaining question for Josh
-After the live runs, do the results satisfy you before R1 starts? That covers Polygon declaration-date coverage, close agreement, and the real snapshot sizes and move-generator timing.
+## Stop Point B: questions for Josh
+1. **Sign-off:** does R0 meet the definition of done, so that R1 can start? This covers the live snapshot, the replay with dividends, the independent-review fixes and 309 green tests.
+2. **Spec §11 versus the brief (still open):** spec §11 requires a recorded **power estimate** and pre-registered scoring rules *before prospective paper trading begins*, which is R1's 5-day live run. The brief's R1 tasks don't list them. Should they be drafted as documents during R1, before the live run, or deferred?
+3. **Move-generator speed** (56–71 s after DR-0025): optimize it early in R1, or leave it, since it doesn't affect the snapshot window?
+

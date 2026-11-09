@@ -1,0 +1,7 @@
+prefetched Massive dividends/splits for 50 symbols in 4 requests (38s)
+waiting 4.6 min for the 10:00-10:10 ET window
+DECISION: c8476d2c96ee7d4b as_of 2026-11-09T15:00:18.357464+00:00 quotes 160468 notes 0
+movegen: 245490 candidates (226052 priced, 19437 unpriceable, 19387 qty 0) in 70.9s; list_hash fab52c21b72fba66
+  by type: {'IRON_CONDOR': 111865, 'LONG_CALL': 8313, 'LONG_CALL_BUTTERFLY': 17757, 'LONG_PUT': 8313, 'LONG_PUT_BUTTERFLY': 17757, 'NULL': 1, 'VERTICAL_CREDIT': 40742, 'VERTICAL_DEBIT': 40742}
+waiting 206s for the execution snapshot
+EXECUTION: cf5e38b148e64f15 as_of 2026-11-09T15:05:19.820730+00:00 quotes 160468 notes 0
