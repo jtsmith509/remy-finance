@@ -1,6 +1,6 @@
 # DR-0035: R0 amendment: long-volatility debit structures in the move generator (MOVEGEN-2)
 
-- **Status:** proposed
+- **Status:** accepted (confirmed by Josh, 2026-11-09: straddles at every strike; strangles from every OTM pair; RAND-1 keeps uniform candidate sampling; the August 2026 replay uses MOVEGEN-2)
 - **Date:** 2026-11-09
 - **Source:** Josh's R0 amendment, 2026-11-09 (a narrow change ahead of a future spec v0.6). It amends the structure list of [DR-0008](DR-0008-candidate-bounds.md) (MOVEGEN-1) and extends [DR-0020](DR-0020-movegen-lattice.md) (lattice) and the R0.6 fixtures of [DR-0018](DR-0018-payoff-conventions.md).
 - **Stage:** R0 (R0.6 and R0.7), carried into R1
@@ -65,7 +65,7 @@ These would each need a separate, explicit amendment:
 - **RAND-1's structure mix.** RAND-1 samples *candidates* uniformly (DR-0031), so its mix now leans towards strangles and long condors, the most numerous types.
 - **Timing:** the replay month (DR-0034) hasn't run yet, so it will use MOVEGEN-2 from the start.
 
-## Questions for Josh
-1. **Straddle strikes:** every lattice strike (as built, following "same strike"), or only the strike nearest spot, as with the iron butterfly?
-2. **Strangle pairs:** every OTM put × OTM call pair (as built), or symmetric pairs only (equal distance from spot), which keeps the count linear?
-3. **RAND-1 mix:** accept the structure mix that uniform candidate sampling implies, or sample a structure type first? The latter would need a linked DR to DR-0031.
+## Questions for Josh (answered 2026-11-09)
+1. **Straddle strikes:** every lattice strike (as built, following "same strike"), or only the strike nearest spot, as with the iron butterfly? **Every strike.**
+2. **Strangle pairs:** every OTM put × OTM call pair (as built), or symmetric pairs only (equal distance from spot), which keeps the count linear? **Every OTM pair.**
+3. **RAND-1 mix:** accept the structure mix that uniform candidate sampling implies, or sample a structure type first? The latter would need a linked DR to DR-0031. **Keep uniform.** The cumulative report now has a by-structure section (engine × structure: count, fill rate, closed, mean predicted, mean realized, P&L), so the mix stays visible.

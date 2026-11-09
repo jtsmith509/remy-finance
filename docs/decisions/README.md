@@ -36,7 +36,7 @@
 | [DR-0032](DR-0032-forecast-records-eval1.md) | Forecast records for EVAL-1 scoring (amends DR-0030 §6) | R1 | accepted |
 | [DR-0033](DR-0033-scheduler.md) | Prospective scheduler design (one idempotent tick) | R1.6 | accepted |
 | [DR-0034](DR-0034-replay-driver.md) | Replay driver for the R1 replay month | R1.8 | accepted |
-| [DR-0035](DR-0035-long-volatility-structures.md) | R0 amendment: long-volatility debit structures (MOVEGEN-2) | R0 amendment | proposed |
-| [DR-0036](DR-0036-sentiment-archive.md) | Narrow prospective archive of public text (proposal only) | R1 (proposal) | proposed |
+| [DR-0035](DR-0035-long-volatility-structures.md) | R0 amendment: long-volatility debit structures (MOVEGEN-2) | R0 amendment | accepted |
+| [DR-0036](DR-0036-sentiment-archive.md) | Narrow prospective archive of public text (framework; build after Stop Point C) | post-R1 | accepted |
 
 Each record has these sections: context, options considered, decision, consequences. Status stays *proposed* until Josh confirms it. A confirmed DR is superseded only by a new, linked DR; it is never edited in place.

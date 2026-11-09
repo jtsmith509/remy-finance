@@ -379,6 +379,38 @@ def cumulative_report(registry: Registry, now: datetime, eval_commit: str) -> st
         ),
     )
 
+    lines += ["", "## By structure type", ""]
+    by_struct: dict[tuple[str, str], list[TradeOutcome]] = defaultdict(list)
+    for s in stats:
+        for o in groups[s.group]:
+            stype = o.rec.candidate.structure_type
+            by_struct[(s.group, stype.value if stype else "-")].append(o)
+    struct_rows: list[tuple[object, ...]] = []
+    for (g, st_name), items in sorted(by_struct.items()):
+        closed = [o for o in items if o.closed_filled and o.realized_return is not None]
+        rr = [float(o.realized_return) for o in closed]  # type: ignore[arg-type]
+        resolved = sum(1 for o in items if o.filled or o.status is Status.UNFILLED)
+        filled = sum(1 for o in items if o.filled)
+        struct_rows.append(
+            (
+                g,
+                st_name,
+                len(items),
+                _pct(filled / resolved) if resolved else "-",
+                len(closed),
+                _pct(statistics.fmean(float(o.rec.predicted_return.mean) for o in closed))
+                if closed
+                else "-",
+                _pct(statistics.fmean(rr)) if rr else "-",
+                _usd(sum((o.realized_pnl for o in closed), Decimal(0))),
+            )
+        )
+    lines += _table(
+        ("engine", "structure", "recommended", "fill rate", "closed", "mean predicted",
+         "mean realized", "P&L"),
+        struct_rows,
+    )  # fmt: skip
+
     lines += ["", "## Selection by rank (closed trades)", ""]
     rows = []
     for s in stats:

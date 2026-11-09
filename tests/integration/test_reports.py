@@ -109,6 +109,10 @@ def test_cumulative_report(built: Path) -> None:
     assert f"EVAL-1 at commit `{EVAL[:12]}`" in text
     assert "MKT-1 v1" in text and "RAND-1 v1" in text
     assert "INSUFFICIENT_SIZE" in text
+    assert "## By structure type" in text
+    for o in outs:
+        st = o.rec.candidate.structure_type
+        assert st is not None and f"| {o.engine_group} | {st.value} |" in text
     assert "p-value" not in text.lower().replace("no p-values", "")
     mkt = [o for o in outs if o.rec.engine == "MKT-1" and o.closed_filled]
     pnl = sum((o.realized_pnl for o in mkt), Decimal(0))

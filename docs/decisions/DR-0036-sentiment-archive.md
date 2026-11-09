@@ -1,6 +1,6 @@
 # DR-0036: A narrow prospective archive of public text (proposal only; not built)
 
-- **Status:** proposed. **Framework only; nothing is implemented.** Josh chooses the sources.
+- **Status:** accepted as the framework (confirmed by Josh, 2026-11-09). **Not built.** Sources: SEC EDGAR, Massive ticker news and Fed/Treasury releases. Re-checks at +1 h, +24 h and +7 d. Building and capture start **after Stop Point C**, as the first post-R1 step; each source is switched on only after a recorded terms check.
 - **Date:** 2026-11-09
 - **Source:** Josh's request, 2026-11-09 (task 2 of the R0 amendment prompt). Related: DR-0017 (time model), DR-0022/0024 (write-once stores and gaps), DR-0012 (backup), DR-0026 (data sources), EVAL-1.
 - **Stage:** R1 (capture only); feature extraction is deferred to a later stage
@@ -83,7 +83,7 @@ Every item returned by a source's query for the universe is kept, including item
 - **Operating cost:** one more thing for the scheduler to poll, plus a `doctor` check per source.
 - **Legal and licensing risk sits at the source level,** which is why each source is switched on only after a recorded terms check, and full article text is stored only where a licence allows it.
 
-## Questions for Josh
-1. **Which sources?** My suggestion for a first, low-risk set: **EDGAR, Massive ticker news, and Fed releases**, which are free, public and authoritative. Add Reddit and GDELT only after a terms review, and X only if the cost is acceptable.
-2. **Timing:** should capture start with the 5-day live run, or after Stop Point C?
-3. **Re-observation schedule** (+1 h, +24 h, +7 d): acceptable, or do you want denser re-checks for social sources, where deletions happen fast?
+## Questions for Josh (answered 2026-11-09)
+1. **Which sources?** My suggestion for a first, low-risk set: **EDGAR, Massive ticker news, and Fed releases**, which are free, public and authoritative. Add Reddit and GDELT only after a terms review, and X only if the cost is acceptable. **EDGAR, Massive ticker news and Fed/Treasury releases.**
+2. **Timing:** should capture start with the 5-day live run, or after Stop Point C? **After Stop Point C.**
+3. **Re-observation schedule** (+1 h, +24 h, +7 d): acceptable, or do you want denser re-checks for social sources, where deletions happen fast? **+1 h, +24 h, +7 d.**
