@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import time
 from collections import Counter
+from collections.abc import Sequence
 from datetime import date, datetime
 from pathlib import Path
 from typing import Annotated
@@ -12,7 +13,7 @@ from typing import Annotated
 import typer
 
 from remy_finance import __version__
-from remy_finance.core import Mode, Provenance, Session
+from remy_finance.core import MarketState, Mode, Provenance, Session
 
 app = typer.Typer(help="REMY Finance command-line interface.", no_args_is_help=True)
 snapshot_app = typer.Typer(help="Market snapshots (R0.4).", no_args_is_help=True)
@@ -29,6 +30,8 @@ report_app = typer.Typer(
     help="Reports by baseline; one mode at a time (R1.7).", no_args_is_help=True
 )
 app.add_typer(report_app, name="report")
+replay_app = typer.Typer(help="Replay the R1 pipeline over history (R1.8).", no_args_is_help=True)
+app.add_typer(replay_app, name="replay")
 
 REPO_DIR = Path(__file__).resolve().parents[2]
 
@@ -651,6 +654,85 @@ def report_cumulative(mode: ModeOpt = "prospective", out: OutOpt = None) -> None
 
     with _open_registry(mode) as reg:
         _emit(cumulative_report(reg, datetime.now(UTC), _eval_commit()), out)
+
+
+@replay_app.command("run")
+def replay_run(
+    start: Annotated[str, typer.Option(help="First decision date, YYYY-MM-DD")],
+    end: Annotated[str, typer.Option(help="Last decision date, YYYY-MM-DD")],
+    tail: Annotated[
+        bool, typer.Option(help="Keep managing and settling positions after END")
+    ] = True,
+    workers: Annotated[int, typer.Option(help="Symbols fetched concurrently")] = 4,
+) -> None:
+    """Run the full R1 pipeline over [START, END] into the REPLAY registry (DR-0034).
+
+    Safe to re-run or resume: stored boards are reused and every step is idempotent."""
+    from datetime import UTC, timedelta
+
+    from remy_finance.data.composite import CompositeSource
+    from remy_finance.data.massive import MassiveSource
+    from remy_finance.data.thetadata import ThetaDataSource
+    from remy_finance.data.timeutil import et_date
+    from remy_finance.scheduler.ops import code_commit
+    from remy_finance.scheduler.replay import ReplayDriver
+    from remy_finance.snapshots.builder import build_replay
+    from remy_finance.snapshots.schedule import SnapshotKind
+
+    theta = ThetaDataSource()
+    massive = MassiveSource(
+        min_interval=float(os.environ.get("MASSIVE_MIN_INTERVAL", "12.5")),
+        include_ticker_events=False,
+    )
+    source = CompositeSource(quotes=theta, events=massive)
+    prov = (Provenance(source="cli", details=(("command", "replay run"),)),)
+
+    def build(
+        d: date, session: Session, kind: SnapshotKind, symbols: Sequence[str], version: str
+    ) -> MarketState:
+        massive.prefetch(symbols)  # cached after the first board of a membership
+        return build_replay(
+            source,
+            d,
+            session,
+            kind=kind,
+            universe_version=version,
+            underlyings=symbols,
+            provenance=prov,
+            max_workers=workers,
+        )
+
+    driver = ReplayDriver(
+        data_dir=_data_dir(),
+        build=build,
+        closes=theta,
+        code_commit=code_commit(REPO_DIR, require_clean=False),
+        log=typer.echo,
+        last_day=et_date(datetime.now(UTC)) - timedelta(days=1),
+    )
+    s = driver.run(date.fromisoformat(start), date.fromisoformat(end), tail=tail)
+    typer.echo(
+        f"replay done in {s.seconds / 60:.0f} min: {s.sessions} sessions + "
+        f"{s.tail_sessions} tail ({s.tail_sessions_skipped} without boards); boards "
+        f"{s.boards_built} built, {s.boards_reused} reused; {s.recommended} recommended, "
+        f"{s.settled} settled, {s.still_open} still open (last day {s.stopped_at})"
+    )
+    for n in s.notes:
+        typer.echo(f"note: {n}")
+
+
+@report_app.command("power-inputs")
+def report_power_inputs(mode: ModeOpt = "replay", out: OutOpt = None) -> None:
+    """Measured fill rate, sigma and design effect for the power-estimate update."""
+    from remy_finance.data.timeutil import et_date
+    from remy_finance.reports.measured import measured_report
+    from remy_finance.reports.outcomes import outcomes
+    from remy_finance.scheduler.runlog import RunLogStore
+
+    m = _mode(mode)
+    days = {et_date(r.decision_time) for r in RunLogStore(_data_dir() / "runs").all(m)}
+    with _open_registry(mode) as reg:
+        _emit(measured_report(outcomes(reg), len(days), m.value), out)
 
 
 if __name__ == "__main__":

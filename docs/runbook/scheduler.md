@@ -71,3 +71,46 @@ To start again, repeat the `launchctl bootstrap` command in step 5.
 
 ## Updating the code
 Recommendations are skipped while the code has uncommitted changes (DR-0033), so `git pull` and keep the tree clean. Each recommendation records the commit that produced it.
+
+# Runbook: the replay month (R1.8)
+
+The replay runs the same pipeline as the live scheduler over a past month, writing to the **replay** registry. Its results are planning inputs for the power-estimate update (power-estimate.md §5), **not evidence of edge**. It needs the Theta Terminal and the Massive key, and it can run while the scheduler isn't installed. Run every command from the repository folder.
+
+The month must end at least 61 days before today, so that every position opened in it has expired and settled. The tail runs up to 60 days past the month. **August 2026** is the latest month that qualifies (DR-0034).
+
+### 1. Build the universe for the month and the tail months
+Each build takes a few minutes. Membership is point-in-time and write-once.
+
+```bash
+uv run remy universe build --month 2026-08
+```
+
+```bash
+uv run remy universe build --month 2026-09
+```
+
+```bash
+uv run remy universe build --month 2026-10
+```
+
+### 2. Run the replay
+This takes about 3–4 hours: about 45 s per board, 4 boards per trading day, for the month and the days in its tail that need boards. It's safe to stop and run again, because stored boards are reused and every step is idempotent.
+
+```bash
+uv run remy replay run --start 2026-08-03 --end 2026-08-31 2>&1 | tee data/logs/replay-2026-08.log
+```
+
+### 3. Check it and produce the reports
+```bash
+uv run remy registry verify --mode replay
+```
+
+```bash
+uv run remy report power-inputs --mode replay --out data/reports/power-inputs-2026-08.md
+```
+
+```bash
+uv run remy report cumulative --mode replay --out data/reports/replay-2026-08-cumulative.md
+```
+
+Send `data/reports/power-inputs-2026-08.md`, `data/reports/replay-2026-08-cumulative.md` and the last 20 lines of the replay log. The power-estimate update is written from them, as a dated addendum.
