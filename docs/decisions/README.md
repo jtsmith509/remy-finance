@@ -37,5 +37,6 @@
 | [DR-0033](DR-0033-scheduler.md) | Prospective scheduler design (one idempotent tick) | R1.6 | accepted |
 | [DR-0034](DR-0034-replay-driver.md) | Replay driver for the R1 replay month | R1.8 | accepted |
 | [DR-0035](DR-0035-long-volatility-structures.md) | R0 amendment: long-volatility debit structures (MOVEGEN-2) | R0 amendment | proposed |
+| [DR-0036](DR-0036-sentiment-archive.md) | Narrow prospective archive of public text (proposal only) | R1 (proposal) | proposed |
 
 Each record has these sections: context, options considered, decision, consequences. Status stays *proposed* until Josh confirms it. A confirmed DR is superseded only by a new, linked DR; it is never edited in place.
