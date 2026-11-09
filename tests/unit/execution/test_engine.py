@@ -383,3 +383,47 @@ def test_exit_policy_interface_drives_discretionary_exits(tmp_path: Path) -> Non
     r = ExitResult.from_canonical_json(out[1].evidence or "")
     assert not r.forced and r.stock is None
     assert out[1].cash == D("2.40") * 200 - D("1.10") * 200 - D("2.60")  # sell 100C, buy 105C
+
+
+# ------------------------------------------------------------------ R0 amendment (DR-0035)
+
+
+def test_long_iron_condor_short_wing_assignment_and_forced_close(engine: PaperEngine) -> None:
+    """+95P / -90P / +105C / -110C x2. At S = 120 the short 110C wing (bid 10.02, extrinsic
+    0.02) is assumed assigned; the next snapshot buys back the stock and closes the rest."""
+    from tests.unit.core.test_payoff import long_iron_condor
+
+    rec = recommendation(structure=long_iron_condor(), quantity=2)
+    entry_book: Book = {
+        ("95", Right.PUT): ("1.15", "1.25"),
+        ("90", Right.PUT): ("0.40", "0.50"),
+        ("105", Right.CALL): ("0.95", "1.05"),
+        ("110", Right.CALL): ("0.35", "0.45"),
+    }
+    tid = open_trade(engine, rec, book=entry_book)
+    assert engine.position(tid).cash == D("-315.20")  # -250 +80 -210 +70 - 8 x 0.65
+    up: Book = {
+        ("95", Right.PUT): ("0.01", "0.05"),
+        ("90", Right.PUT): ("0.01", "0.05"),
+        ("105", Right.CALL): ("15.00", "15.20"),
+        ("110", Right.CALL): ("10.02", "10.20"),
+    }
+    d1 = board(
+        et(date(2026, 11, 9), 15, 45), spot=("119.98", "120.02"), book=up, session=Session.CLOSE
+    )
+    out = engine.on_snapshot(tid, d1, execution_of(d1, book=up), NOW)
+    assert [e.kind for e in out] == [E.ASSIGNMENT_ASSUMED]  # the call wing only; 90P is OTM
+    assert "C00110000" in (out[0].evidence or "")
+    assert out[0].cash == D("22000")  # deliver 200 shares at the 110 strike
+    pos = engine.position(tid)
+    assert pos.stock_shares == -200 and len(pos.open_legs) == 3
+
+    d2 = board(et(date(2026, 11, 10), 10, 0), spot=("120.00", "120.10"), book=up)
+    out = engine.on_snapshot(tid, d2, execution_of(d2, spot=("120.00", "120.10"), book=up), NOW)
+    assert [e.kind for e in out] == [E.EXIT_SUBMITTED, E.EXIT_FILLED, E.TRADE_CLOSED]
+    # stock: buy 200 at 120.10; options: sell 95P 0.01, buy 90P 0.05, sell 105C 15.00, fees 3.90
+    assert out[1].cash == D("-24020") + D("2") - D("10") + D("3000") - D("3.90")
+    s = summary(engine, tid)
+    assert s.realized_pnl == D("-315.20") + D("22000") + out[1].cash == D("652.90")
+    assert s.realized_pnl >= -rec.capital_at_risk
+    assert engine.registry.verify().ok

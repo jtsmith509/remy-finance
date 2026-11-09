@@ -48,6 +48,12 @@ class StructureType(StrEnum):
     IRON_CONDOR = "IRON_CONDOR"
     LONG_CALL_BUTTERFLY = "LONG_CALL_BUTTERFLY"
     LONG_PUT_BUTTERFLY = "LONG_PUT_BUTTERFLY"
+    # Long-volatility debit structures (R0 amendment, DR-0035). IRON_CONDOR above is the
+    # short (credit) condor; LONG_IRON_CONDOR buys the inner strikes and sells the wings.
+    LONG_STRADDLE = "LONG_STRADDLE"
+    LONG_STRANGLE = "LONG_STRANGLE"
+    LONG_IRON_CONDOR = "LONG_IRON_CONDOR"
+    LONG_IRON_BUTTERFLY = "LONG_IRON_BUTTERFLY"
     OTHER_DEFINED_RISK = "OTHER_DEFINED_RISK"
 
 

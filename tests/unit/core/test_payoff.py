@@ -61,6 +61,37 @@ def long_call_butterfly() -> Structure:
     )
 
 
+# R0 amendment (DR-0035): long-volatility debit structures, fixtures from Josh's table.
+def long_straddle() -> Structure:
+    return Structure.price(
+        [leg("100", C, L), leg("100", P, L)], ["2.50", "2.30"], StructureType.LONG_STRADDLE, FEES_1
+    )
+
+
+def long_strangle() -> Structure:
+    return Structure.price(
+        [leg("105", C, L), leg("95", P, L)], ["1.05", "1.25"], StructureType.LONG_STRANGLE, FEES_1
+    )
+
+
+def long_iron_condor() -> Structure:
+    return Structure.price(
+        [leg("95", P, L), leg("90", P, S), leg("105", C, L), leg("110", C, S)],
+        ["1.25", "0.40", "1.05", "0.35"],
+        StructureType.LONG_IRON_CONDOR,
+        FEES_1,
+    )
+
+
+def long_iron_butterfly() -> Structure:
+    return Structure.price(
+        [leg("100", C, L), leg("100", P, L), leg("105", C, S), leg("95", P, S)],
+        ["2.50", "2.30", "1.00", "1.20"],
+        StructureType.LONG_IRON_BUTTERFLY,
+        FEES_1,
+    )
+
+
 # (builder, capital at risk, [(S_T, expected P&L), ...]) -- straight from the handoff table
 FIXTURES = [
     (long_call, "250.65", [("110", "749.35"), ("95", "-250.65")]),
@@ -68,6 +99,53 @@ FIXTURES = [
     (bull_put_credit, "421.30", [("92", "-221.30"), ("95", "78.70"), ("150", "78.70")]),
     (iron_condor, "357.60", [("100", "142.40"), ("112", "-357.60")]),
     (long_call_butterfly, "212.60", [("100", "287.40"), ("90", "-212.60")]),
+    # R0 amendment (DR-0035)
+    (
+        long_straddle,
+        "481.30",
+        [
+            ("100", "-481.30"),
+            ("110", "518.70"),
+            ("90", "518.70"),
+            ("95", "18.70"),
+            ("0", "9518.70"),
+        ],
+    ),
+    (
+        long_strangle,
+        "231.30",
+        [
+            ("95", "-231.30"),
+            ("100", "-231.30"),
+            ("105", "-231.30"),
+            ("110", "268.70"),
+            ("90", "268.70"),
+        ],
+    ),
+    (
+        long_iron_condor,
+        "157.60",
+        [
+            ("95", "-157.60"),
+            ("100", "-157.60"),
+            ("105", "-157.60"),
+            ("110", "342.40"),
+            ("150", "342.40"),
+            ("90", "342.40"),
+            ("0", "342.40"),
+        ],
+    ),
+    (
+        long_iron_butterfly,
+        "262.60",
+        [
+            ("100", "-262.60"),
+            ("105", "237.40"),
+            ("150", "237.40"),
+            ("95", "237.40"),
+            ("0", "237.40"),
+        ],
+    ),
 ]
 
 
@@ -119,6 +197,39 @@ def test_risk_numbers_of_fixtures() -> None:
         D(210),
         D(290),
     )
+
+
+def test_risk_numbers_of_long_volatility_fixtures() -> None:
+    s = long_straddle()
+    assert (s.net_premium, s.max_loss, s.max_gain, s.entry_fees) == (
+        D(480),
+        D(480),
+        None,
+        D("1.30"),
+    )
+    s = long_strangle()
+    assert (s.net_premium, s.max_loss, s.max_gain, s.entry_fees) == (
+        D(230),
+        D(230),
+        None,
+        D("1.30"),
+    )
+    s = long_iron_condor()  # debit 155; max payoff 500 (one 5-wide wing in the money)
+    assert (s.net_premium, s.max_loss, s.max_gain, s.entry_fees) == (
+        D(155),
+        D(155),
+        D(345),
+        D("2.60"),
+    )
+    s = long_iron_butterfly()  # debit 260; max payoff 500
+    assert (s.net_premium, s.max_loss, s.max_gain, s.entry_fees) == (
+        D(260),
+        D(260),
+        D(240),
+        D("2.60"),
+    )
+    for build in (long_straddle, long_strangle, long_iron_condor, long_iron_butterfly):
+        assert build().exit_fees == 0  # HOLD-1: no closing trade, so no exit fees in CaR
 
 
 def test_quantity_scales_linearly() -> None:

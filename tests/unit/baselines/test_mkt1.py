@@ -24,7 +24,7 @@ from remy_finance.baselines.mkt1 import (
 )
 from remy_finance.baselines.pricing import black76, implied_vol
 from remy_finance.baselines.smile import LEE_MAX_WING_SLOPE, fit_svi
-from remy_finance.core import Candidate, MarketState, Mode, Right, Side
+from remy_finance.core import Candidate, MarketState, Mode, Right
 from remy_finance.movegen.generator import generate
 from remy_finance.registry import Recommendation, Registry, registry_path
 from tests.unit.baselines import synthetic as S
@@ -209,15 +209,11 @@ def test_large_positive_prediction_is_a_logged_bug_signal_not_a_pick() -> None:
         bad.append(q)
     board = board.model_copy(update={"option_quotes": tuple(bad)})
     recs, log = run(board)
-    assert log.bug_signals
-    for r in recs:
-        legs = r.candidate.legs
-        assert not any(
-            lg.contract.strike == D("115")
-            and lg.side is Side.LONG
-            and lg.contract.right is Right.CALL
-            for lg in legs
-        )
+    flagged = {h for h, _ in log.bug_signals}
+    assert flagged  # the lone long 115C, bought at 0.01, predicts far above +5%
+    assert all(mean > MKT_1.bug_signal_return for _, mean in log.bug_signals)
+    assert not any(r.candidate.content_hash() in flagged for r in recs)  # none selected
+    assert all(r.expected_return_pct <= MKT_1.bug_signal_return for r in recs)
 
 
 def test_unfittable_expiration_is_rejected_and_logged() -> None:

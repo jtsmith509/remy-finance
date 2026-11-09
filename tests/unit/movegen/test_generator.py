@@ -7,6 +7,7 @@ from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 
 from remy_finance.core import (
+    Candidate,
     MarketState,
     Mode,
     OptionContract,
@@ -18,7 +19,7 @@ from remy_finance.core import (
     StructureType,
     UnderlyingQuote,
 )
-from remy_finance.movegen.config import SIZE_1
+from remy_finance.movegen.config import MOVEGEN_1, MOVEGEN_2, SIZE_1, MovegenConfig
 from remy_finance.movegen.generator import generate
 
 D = Decimal
@@ -74,13 +75,14 @@ def board(
     )
 
 
-def counts(state: MarketState) -> Counter[StructureType | None]:
-    cands, _ = generate(state)
+def counts(state: MarketState, config: MovegenConfig = MOVEGEN_2) -> Counter[StructureType | None]:
+    cands, _ = generate(state, config)
     return Counter(c.structure_type for c in cands)
 
 
 def test_hand_computed_counts() -> None:
-    c = counts(board())
+    """MOVEGEN-1 (kept unchanged for reproducibility)."""
+    c = counts(board(), MOVEGEN_1)
     assert c[None] == 1  # null move
     assert c[StructureType.LONG_CALL] == 9 and c[StructureType.LONG_PUT] == 9
     # per right: w=2.5 -> 8 pairs, w=5 -> 7, w=10 -> 5 => 20; x2 rights
@@ -90,6 +92,51 @@ def test_hand_computed_counts() -> None:
     # OTM shorts around spot 100: w=2.5 -> 3x3, w=5 -> 2x2, w=10 -> 0
     assert c[StructureType.IRON_CONDOR] == 13
     assert sum(c.values()) == 138
+
+
+def test_hand_computed_counts_movegen2_long_volatility() -> None:
+    """MOVEGEN-2 (DR-0035) adds the long-volatility structures; spot 100, strikes 90..110."""
+    c = counts(board())
+    assert c[StructureType.LONG_STRADDLE] == 9  # every strike quoted on both sides
+    assert c[StructureType.LONG_STRANGLE] == 16  # 4 OTM puts (< 100) x 4 OTM calls (> 100)
+    # OTM inner longs with wings: w=2.5 -> 3x3, w=5 -> 2x2, w=10 -> 0 (mirrors IRON_CONDOR)
+    assert c[StructureType.LONG_IRON_CONDOR] == 13
+    assert c[StructureType.LONG_IRON_BUTTERFLY] == 3  # centred at 100; one per width
+    assert sum(c.values()) == 138 + 9 + 16 + 13 + 3
+
+
+def test_movegen2_structure_shapes() -> None:
+    cands, _ = generate(board())
+    by_type: dict[StructureType, list[Candidate]] = {}
+    for c in cands[1:]:
+        assert c.structure_type is not None
+        by_type.setdefault(c.structure_type, []).append(c)
+    for c in by_type[StructureType.LONG_STRADDLE]:
+        (p, cl) = c.legs
+        assert (p.contract.right, cl.contract.right) == (Right.PUT, Right.CALL)
+        assert p.contract.strike == cl.contract.strike and p.side is cl.side is Side.LONG
+    for c in by_type[StructureType.LONG_STRANGLE]:
+        p, cl = c.legs
+        assert p.contract.strike < 100 < cl.contract.strike
+        assert p.side is cl.side is Side.LONG
+    for t in (StructureType.LONG_IRON_CONDOR, StructureType.LONG_IRON_BUTTERFLY):
+        for c in by_type[t]:
+            wp, ip, ic, wc = c.legs  # sorted: puts by strike, then calls by strike
+            assert (wp.side, ip.side, ic.side, wc.side) == (
+                Side.SHORT,
+                Side.LONG,
+                Side.LONG,
+                Side.SHORT,
+            )
+            assert (
+                ip.contract.strike - wp.contract.strike == wc.contract.strike - ic.contract.strike
+            )
+            if t is StructureType.LONG_IRON_BUTTERFLY:
+                assert ip.contract.strike == ic.contract.strike == 100
+            else:
+                assert ip.contract.strike < 100 < ic.contract.strike
+            s = c.structure
+            assert s is not None and s.net_premium > 0  # a debit: long volatility
 
 
 def test_null_move_first_and_always_present() -> None:
@@ -132,7 +179,7 @@ def test_unpriceable_kept_with_reason() -> None:
         any(lg.contract.strike == D(105) and lg.contract.right is Right.CALL for lg in c.legs)
         for c in bad
     )
-    assert len(cands) == 138  # nothing dropped
+    assert len(cands) == 179  # nothing dropped (MOVEGEN-2)
 
 
 def test_entry_prices_cross_the_spread_and_sizing() -> None:

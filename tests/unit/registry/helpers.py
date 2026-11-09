@@ -6,7 +6,7 @@ from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import Any
 
-from remy_finance.core import Candidate, Mode
+from remy_finance.core import Candidate, Mode, Structure
 from remy_finance.registry import (
     EventKind,
     JournalEvent,
@@ -22,10 +22,18 @@ SNAP = "a" * 64
 
 
 def recommendation(
-    mode: Mode = Mode.PROSPECTIVE, *, engine: str = "MKT-1", quantity: int = 2, **kw: Any
+    mode: Mode = Mode.PROSPECTIVE,
+    *,
+    engine: str = "MKT-1",
+    quantity: int = 2,
+    structure: Structure | None = None,
+    **kw: Any,
 ) -> Recommendation:
     cand = Candidate.priced(
-        bull_call_spread(), quantity=quantity, entry_rule="FILL-1", exit_policy_id="HOLD-1"
+        structure or bull_call_spread(),
+        quantity=quantity,
+        entry_rule="FILL-1",
+        exit_policy_id="HOLD-1",
     )
     car = cand.structure.capital_at_risk * quantity  # type: ignore[union-attr]
     mean = D("-0.04")

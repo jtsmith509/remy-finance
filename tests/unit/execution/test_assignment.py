@@ -15,6 +15,7 @@ from remy_finance.execution.assignment import (
     assess_short_leg,
     assignment_consequence,
 )
+from tests.factories import EXP as EXP_DATE
 from tests.factories import leg
 
 D = Decimal
@@ -162,3 +163,55 @@ def test_consequence_short_put_takes_stock_no_dividend_owed() -> None:
         leg("100", Right.PUT, Side.SHORT), 1, dividend_per_share_before_close=D("0.25")
     )
     assert c.stock_shares == 100 and c.strike_cash == D(-10000) and c.dividend_owed == 0
+
+
+# ------------------------------------------------------------------ R0 amendment (DR-0035)
+# Long iron condor: +95P / -90P / +105C / -110C. Its short wings are subject to ASSIGN-1
+# and EXP-1 like any short leg.
+
+
+def test_long_iron_condor_short_call_wing_assigned_when_deep_itm() -> None:
+    from remy_finance.execution.assignment import assess_short_leg, assignment_consequence
+
+    wing = leg("110", Right.CALL, Side.SHORT)
+    a = assess_short_leg(
+        wing,
+        option_bid=D("10.02"),  # intrinsic 10.00 at S = 120; extrinsic 0.02 < 0.05
+        underlying_price=D("120"),
+        as_of=AS_OF,
+        next_session=NEXT,
+    )
+    assert a.assigned and a.reason is AssignmentReason.EXTRINSIC_THRESHOLD
+    c = assignment_consequence(wing, 1)
+    assert (c.stock_shares, c.strike_cash) == (-100, D("11000"))  # deliver 100 at 110
+
+
+def test_long_iron_condor_short_put_wing_not_assigned_when_otm() -> None:
+    from remy_finance.execution.assignment import assess_short_leg
+
+    a = assess_short_leg(
+        leg("90", Right.PUT, Side.SHORT),
+        option_bid=D("0.01"),
+        underlying_price=D("120"),
+        as_of=AS_OF,
+        next_session=NEXT,
+    )
+    assert not a.assigned and not a.in_the_money
+
+
+def test_long_iron_condor_exp1_settles_the_short_wing_and_flags_pin_risk() -> None:
+    from remy_finance.execution.settlement import SettlementFlag, settle_at_expiration
+
+    legs = [
+        leg("95", Right.PUT, Side.LONG),
+        leg("90", Right.PUT, Side.SHORT),
+        leg("105", Right.CALL, Side.LONG),
+        leg("110", Right.CALL, Side.SHORT),
+    ]
+    s = settle_at_expiration(legs, 1, expiration=EXP_DATE, official_close=D("112"))
+    assert s.settlement_value == D("500")  # +700 long 105C, -200 short 110C: capped wing
+    assert s.flags == ()
+    pin = settle_at_expiration(legs, 1, expiration=EXP_DATE, official_close=D("110.10"))
+    assert pin.flags == (SettlementFlag.PIN_RISK_APPROXIMATE,)  # short wing within 0.25
+    short_wing = next(x for x in pin.legs if x.osi_symbol.endswith("C00110000"))
+    assert short_wing.exercised and short_wing.value == D("-10.00")

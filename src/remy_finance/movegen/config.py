@@ -81,6 +81,24 @@ MOVEGEN_1 = MovegenConfig(
     exit_policy_id="HOLD-1",
 )
 
+# R0 amendment (DR-0035): MOVEGEN-1 plus REMY's core long-volatility debit structures.
+# Generation rules (fixed, see movegen.generator._shapes): straddles at every lattice strike
+# quoted on both sides; strangles with an OTM put below spot and an OTM call above it; long
+# iron condors with OTM inner longs and short wings one width further out; long iron
+# butterflies centred on the lattice strike nearest spot, wings one width either side.
+MOVEGEN_2 = MOVEGEN_1.model_copy(
+    update={
+        "version": "MOVEGEN-2",
+        "structure_types": (
+            *MOVEGEN_1.structure_types,
+            StructureType.LONG_STRADDLE,
+            StructureType.LONG_STRANGLE,
+            StructureType.LONG_IRON_CONDOR,
+            StructureType.LONG_IRON_BUTTERFLY,
+        ),
+    }
+)
+
 
 class SizingRule(Record):
     version: str = Field(min_length=1)

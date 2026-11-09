@@ -1,10 +1,11 @@
 """Deterministic move generator (handoff R0.7).
 
 From a ``MarketState`` and a ``MovegenConfig`` it enumerates long calls and puts, vertical
-debit and credit spreads, iron condors and long call/put butterflies within the bounds,
-always plus the null move. A candidate with any leg lacking a two-sided quote is kept as
-``UNPRICEABLE`` with a reason, never silently dropped. Same board + same config gives a
-byte-identical ordered candidate list and the same list hash.
+debit and credit spreads, iron condors and long call/put butterflies, and (MOVEGEN-2, the
+default, DR-0035) long straddles, strangles, long iron condors and long iron butterflies,
+within the bounds, always plus the null move. A candidate with any leg lacking a two-sided
+quote is kept as ``UNPRICEABLE`` with a reason, never silently dropped. Same board + same
+config gives a byte-identical ordered candidate list and the same list hash.
 
 Priced candidates use the FILL-1 price assumption at the decision snapshot (ask for long
 legs, bid for short legs); actual fills use the execution quote later (DR-0003).
@@ -37,7 +38,7 @@ from remy_finance.core import (
     canonical,
 )
 from remy_finance.execution.fill import FILL_1, FillRule
-from remy_finance.movegen.config import MOVEGEN_1, SIZE_1, MovegenConfig, SizingRule
+from remy_finance.movegen.config import MOVEGEN_2, SIZE_1, MovegenConfig, SizingRule
 
 NEW_YORK = ZoneInfo("America/New_York")
 TWO = Decimal(2)
@@ -128,6 +129,33 @@ def _shapes(
                             fly_type,
                             ((right, k1, L, 1), (right, kc, S, 2), (right, k1 + 2 * w, L, 1)),
                         )
+    both = calls & puts
+    if StructureType.LONG_STRADDLE in types:
+        for k in both:
+            yield StructureType.LONG_STRADDLE, ((P, k, L, 1), (C, k, L, 1))
+    if StructureType.LONG_STRANGLE in types:
+        for kp in (k for k in puts if k < spot):
+            for kc in (k for k in calls if k > spot):
+                yield StructureType.LONG_STRANGLE, ((P, kp, L, 1), (C, kc, L, 1))
+    if StructureType.LONG_IRON_CONDOR in types:
+        for w in widths:
+            inner_puts = [k for k in puts if k < spot and k - w in puts]
+            inner_calls = [k for k in calls if k > spot and k + w in calls]
+            for kp in inner_puts:
+                for kc in inner_calls:
+                    yield (
+                        StructureType.LONG_IRON_CONDOR,
+                        ((P, kp - w, S, 1), (P, kp, L, 1), (C, kc, L, 1), (C, kc + w, S, 1)),
+                    )
+    if StructureType.LONG_IRON_BUTTERFLY in types and both:
+        gap = min(abs(k - spot) for k in both)
+        for k in (k for k in both if abs(k - spot) == gap):  # ATM: nearest strike(s)
+            for w in widths:
+                if k - w in puts and k + w in calls:
+                    yield (
+                        StructureType.LONG_IRON_BUTTERFLY,
+                        ((P, k - w, S, 1), (P, k, L, 1), (C, k, L, 1), (C, k + w, S, 1)),
+                    )
     if StructureType.IRON_CONDOR in types:
         for w in widths:
             short_puts = [k for k in puts if k - w in puts]
@@ -157,7 +185,7 @@ def _leg_sort_key(shape_leg: tuple[Right, Decimal, Side, int]) -> tuple[int, Dec
 
 def generate(
     state: MarketState,
-    config: MovegenConfig = MOVEGEN_1,
+    config: MovegenConfig = MOVEGEN_2,
     *,
     sizing: SizingRule = SIZE_1,
     fill_rule: FillRule = FILL_1,
