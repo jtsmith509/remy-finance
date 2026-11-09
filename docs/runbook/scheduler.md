@@ -94,7 +94,13 @@ uv run remy universe build --month 2026-10
 ```
 
 ### 2. Run the replay
-This takes about 3–4 hours: about 45 s per board, 4 boards per trading day, for the month and the days in its tail that need boards. It's safe to stop and run again, because stored boards are reused and every step is idempotent.
+This takes about 3–4 hours: about 60–70 s per board (measured on the Mac mini, about 170k quotes each), 4 boards per trading day, for the month and the days in its tail that need boards. It's safe to stop and run again, because stored boards are reused and every step is idempotent.
+
+Create the log folder first (`tee` won't create it):
+
+```bash
+mkdir -p data/logs
+```
 
 ```bash
 uv run remy replay run --start 2026-08-03 --end 2026-08-31 2>&1 | tee data/logs/replay-2026-08.log
