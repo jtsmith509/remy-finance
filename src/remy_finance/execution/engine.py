@@ -356,10 +356,14 @@ class PaperEngine:
         return [self._append(rec, E.ORDER_SUBMITTED, rec.receipt_time, now, note=note)]
 
     def fill_entry(
-        self, trade_id: str, execution: MarketState | None, now: datetime
+        self,
+        trade_id: str,
+        execution: MarketState | None,
+        now: datetime,
+        missing_reason: str = "no execution snapshot (gap)",
     ) -> list[JournalEvent]:
         """Fill the entry at the execution board, or record it unfilled. ``execution`` None
-        means the execution snapshot is a gap: the order is unfilled (no quote)."""
+        means no usable execution board (``missing_reason`` says why): unfilled."""
         pos = self.position(trade_id)
         rec = pos.rec
         if not pos.submitted:
@@ -383,7 +387,7 @@ class PaperEngine:
         )
         at = max(at, rec.receipt_time)
         if not fill.filled:
-            note = "no execution snapshot (gap)" if execution is None else _unfilled_note(fill)
+            note = missing_reason if execution is None else _unfilled_note(fill)
             out = [self._append(rec, E.ORDER_UNFILLED, at, now, evidence=fill, note=note)]
             out.append(self._close_trade(self.position(trade_id), now))
             return out

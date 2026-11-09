@@ -92,10 +92,10 @@ class Pipeline:
             if rec.snapshot_id != decision.snapshot_id:
                 continue
             self.engine.submit(rec.trade_id, self.clock())  # no-op if already submitted
-            board = execution
+            board, why = execution, "no execution snapshot (gap)"
             if board is not None and rec.receipt_time > board.as_of:
-                board = None  # recorded after the execution quote existed: unfilled
-            n += len(self.engine.fill_entry(rec.trade_id, board, self.clock()))
+                board, why = None, "recorded after the execution quote was taken"
+            n += len(self.engine.fill_entry(rec.trade_id, board, self.clock(), why))
         return n
 
     def manage(self, decision: MarketState, execution: MarketState | None) -> int:

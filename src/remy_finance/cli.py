@@ -25,6 +25,10 @@ run_app = typer.Typer(help="Scheduled jobs (R1.6).", no_args_is_help=True)
 app.add_typer(run_app, name="run")
 scheduler_app = typer.Typer(help="launchd set-up (R1.6).", no_args_is_help=True)
 app.add_typer(scheduler_app, name="scheduler")
+report_app = typer.Typer(
+    help="Reports by baseline; one mode at a time (R1.7).", no_args_is_help=True
+)
+app.add_typer(report_app, name="report")
 
 REPO_DIR = Path(__file__).resolve().parents[2]
 
@@ -568,6 +572,85 @@ def scheduler_plist(
     typer.echo(f"  launchctl bootstrap gui/$(id -u) {dest}")
     typer.echo("stop it with:")
     typer.echo("  launchctl bootout gui/$(id -u)/com.remy-finance.tick")
+
+
+OutOpt = Annotated[Path | None, typer.Option(help="Also write the report to this file")]
+
+
+def _eval_commit() -> str:
+    import subprocess
+
+    try:
+        out = subprocess.run(
+            [
+                "git",
+                "-C",
+                str(REPO_DIR),
+                "log",
+                "-1",
+                "--format=%H",
+                "--",
+                "docs/evaluation/EVAL-1-scoring.md",
+            ],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+    except (OSError, subprocess.CalledProcessError):
+        return "unknown"
+    return out.stdout.strip() or "unknown"
+
+
+def _emit(text: str, out: Path | None) -> None:
+    typer.echo(text)
+    if out is not None:
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(text, encoding="utf-8")
+
+
+@report_app.command("trades")
+def report_trades(mode: ModeOpt = "prospective", out: OutOpt = None) -> None:
+    """Every trade: prediction, status and outcome."""
+    from datetime import UTC
+
+    from remy_finance.reports.render import trades_report
+
+    with _open_registry(mode) as reg:
+        _emit(trades_report(reg, datetime.now(UTC), _eval_commit()), out)
+
+
+@report_app.command("daily")
+def report_daily(
+    mode: ModeOpt = "prospective",
+    day: Annotated[str, typer.Option(help="YYYY-MM-DD; default today (ET)")] = "",
+    out: OutOpt = None,
+) -> None:
+    """One day's activity: recommendations, null decisions, fills, exits, closes, gaps."""
+    from datetime import UTC
+
+    from remy_finance.data.timeutil import et_date
+    from remy_finance.reports.render import daily_report
+    from remy_finance.scheduler.runlog import RunLogStore
+    from remy_finance.snapshots.store import SnapshotStore
+
+    now = datetime.now(UTC)
+    when = date.fromisoformat(day) if day else et_date(now)
+    m = _mode(mode)
+    runs = RunLogStore(_data_dir() / "runs").all(m)
+    gaps = SnapshotStore(_data_dir() / "snapshots").gaps() if m is Mode.PROSPECTIVE else []
+    with _open_registry(mode) as reg:
+        _emit(daily_report(reg, when, now, _eval_commit(), runs, gaps), out)
+
+
+@report_app.command("cumulative")
+def report_cumulative(mode: ModeOpt = "prospective", out: OutOpt = None) -> None:
+    """By baseline: fill rate, realized vs predicted, P&L, drawdown, scores, ranks."""
+    from datetime import UTC
+
+    from remy_finance.reports.render import cumulative_report
+
+    with _open_registry(mode) as reg:
+        _emit(cumulative_report(reg, datetime.now(UTC), _eval_commit()), out)
 
 
 if __name__ == "__main__":

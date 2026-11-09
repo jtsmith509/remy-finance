@@ -4,6 +4,7 @@ from remy_finance.registry.lifecycle import LifecycleError, check_next
 from remy_finance.registry.records import (
     ADJ_0,
     EVAL_1_BINS,
+    KNOWN_BINS,
     EventKind,
     JournalEvent,
     Quantile,
@@ -26,6 +27,7 @@ __all__ = [
     "ADJ_0",
     "EVAL_1_BINS",
     "GENESIS",
+    "KNOWN_BINS",
     "EventKind",
     "JournalEvent",
     "LifecycleError",
