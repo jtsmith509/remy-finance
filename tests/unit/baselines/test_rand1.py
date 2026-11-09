@@ -78,10 +78,11 @@ def test_forecasts_are_mkt1s_and_trade_ids_are_rand1s() -> None:
 
     score = score_board(b, cands)
     s = next(x for x in score.scored if x.candidate.content_hash() == pick.candidate.content_hash())
-    mean, quantiles, tails = score.forecast(s)
-    assert pick.predicted_return.mean == mean
-    assert [q.value for q in pick.predicted_return.quantiles] == [v for _, v in quantiles]
-    assert list(pick.tail_measures) == tails
+    f = score.forecast(s)
+    assert pick.predicted_return.mean == f.mean
+    assert [q.value for q in pick.predicted_return.quantiles] == [v for _, v in f.quantiles]
+    assert list(pick.tail_measures) == f.tails
+    assert list(pick.predicted_return.bin_probabilities) == f.bin_probabilities
     assert pick.trade_id not in {m.trade_id for m in m_recs}
 
 

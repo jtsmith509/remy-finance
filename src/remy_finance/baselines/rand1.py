@@ -79,7 +79,7 @@ def run_rand1(
     artifact = cfg.content_hash()
     recs: list[Recommendation] = []
     for rank, c in enumerate(picks, start=1):
-        mean, quantiles, tails = score.forecast(by_id[id(c)])
+        forecast = score.forecast(by_id[id(c)])
         recs.append(
             build_recommendation(
                 candidate=c,
@@ -91,9 +91,7 @@ def run_rand1(
                 receipt_time=receipt_time,
                 rank=rank,  # draw order, not a preference
                 method="RAND-1 selection; MKT-1 market-implied forecast",
-                mean=mean,
-                quantiles=quantiles,
-                tail_measures=tails,
+                forecast=forecast,
                 search_config=(
                     ("ranking_adjustment", ADJ_0),
                     ("selection", cfg.selection.version),

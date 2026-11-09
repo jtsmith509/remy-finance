@@ -3,10 +3,12 @@
 from remy_finance.registry.lifecycle import LifecycleError, check_next
 from remy_finance.registry.records import (
     ADJ_0,
+    EVAL_1_BINS,
     EventKind,
     JournalEvent,
     Quantile,
     Recommendation,
+    ReturnBins,
     ReturnDistribution,
     derive_trade_id,
 )
@@ -22,6 +24,7 @@ from remy_finance.registry.store import (
 
 __all__ = [
     "ADJ_0",
+    "EVAL_1_BINS",
     "GENESIS",
     "EventKind",
     "JournalEvent",
@@ -30,6 +33,7 @@ __all__ = [
     "Recommendation",
     "Registry",
     "RegistryError",
+    "ReturnBins",
     "ReturnDistribution",
     "Row",
     "VerifyReport",

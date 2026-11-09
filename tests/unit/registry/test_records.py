@@ -99,3 +99,49 @@ def test_cash_is_decimal_only() -> None:
     with pytest.raises(ValidationError):
         event(rec, EventKind.LEG_FILLED, cash=1.5)
     assert event(rec, EventKind.LEG_FILLED, cash=Decimal("-130.65")).cash == D("-130.65")
+
+
+# ------------------------------------------------------------------ return bins (DR-0032)
+
+
+def test_return_bins_are_right_closed() -> None:
+    from remy_finance.registry import EVAL_1_BINS
+
+    assert EVAL_1_BINS.n_bins == 9
+    assert EVAL_1_BINS.index(D("-1")) == 0
+    assert EVAL_1_BINS.index(D("-0.99")) == 0
+    assert EVAL_1_BINS.index(D("-0.98")) == 1
+    assert EVAL_1_BINS.index(D("0")) == 3
+    assert EVAL_1_BINS.index(D("0.0001")) == 4
+    assert EVAL_1_BINS.index(D("5")) == 8
+
+
+@pytest.mark.parametrize(
+    ("bins_version", "probs", "message"),
+    [
+        ("EVAL-1-BINS", ["0.5", "0.5"], "9 bins"),
+        ("EVAL-1-BINS", ["0.1"] * 9, "not exactly 1"),
+        ("EVAL-1-BINS", ["1.1", "-0.1"] + ["0"] * 7, r"\[0, 1\]"),
+        ("NOPE", ["1"], "unknown bins_version"),
+        (None, ["1"], "need a bins_version"),
+    ],
+)
+def test_bin_probability_validation(
+    bins_version: str | None, probs: list[str], message: str
+) -> None:
+    from remy_finance.registry import ReturnDistribution
+
+    with pytest.raises(ValidationError, match=message):
+        ReturnDistribution(
+            method="m",
+            mean=D("0"),
+            bins_version=bins_version,
+            bin_probabilities=tuple(D(p) for p in probs),
+        )
+    ok = ReturnDistribution(
+        method="m",
+        mean=D("0"),
+        bins_version="EVAL-1-BINS",
+        bin_probabilities=(D("0.2"), D("0.8")) + (D(0),) * 7,
+    )
+    assert ok.canonical_json().count("ReturnDistribution@2") == 1

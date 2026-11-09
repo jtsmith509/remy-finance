@@ -33,5 +33,6 @@
 | [DR-0029](DR-0029-fill-engine.md) | Paper fill engine details (forced close, gaps, per-leg fills) | R1.2 | accepted |
 | [DR-0030](DR-0030-mkt1-details.md) | Market-implied baseline MKT-1 details | R1.4 | accepted |
 | [DR-0031](DR-0031-rand1-details.md) | Random baseline RAND-1 details | R1.5 | accepted |
+| [DR-0032](DR-0032-forecast-records-eval1.md) | Forecast records for EVAL-1 scoring (amends DR-0030 §6) | R1 | accepted |
 
 Each record has these sections: context, options considered, decision, consequences. Status stays *proposed* until Josh confirms it. A confirmed DR is superseded only by a new, linked DR; it is never edited in place.

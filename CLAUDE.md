@@ -32,5 +32,5 @@ If the brief and the spec disagree, **stop and ask Josh**. Don't resolve it your
 ## Status
 
 - Current stage: **R1 in progress.** Stop Point B closed 2026-11-09 (`docs/memos/R0-result.md`). The next hard stop is **Stop Point C** at the end of R1.
-- Agreed for R1: optimize the move generator early, keeping DR-0025's exactness (done). The spec §11 power estimate and the pre-registered scoring protocol **EVAL-1** were approved 2026-11-09 (`docs/evaluation/`). EVAL-1 is frozen, and changes go only through EVAL-2. Before the 5-day live run: (1) implement the EVAL-1 §6 record changes through a DR linked to DR-0030; (2) run the replay month and add a dated update to the power estimate.
-- DR-0001 to DR-0027 are **accepted** (2026-11-08); DR-0028 to DR-0031 accepted 2026-11-09. Change them only through new, linked DRs.
+- Agreed for R1: optimize the move generator early, keeping DR-0025's exactness (done). The spec §11 power estimate and the pre-registered scoring protocol **EVAL-1** were approved 2026-11-09 (`docs/evaluation/`). EVAL-1 is frozen, and changes go only through EVAL-2. Before the 5-day live run: (1) the EVAL-1 §6 record changes, done in DR-0032; (2) run the replay month and add a dated update to the power estimate.
+- DR-0001 to DR-0027 are **accepted** (2026-11-08); DR-0028 to DR-0032 accepted 2026-11-09. Change them only through new, linked DRs.

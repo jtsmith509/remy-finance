@@ -7,6 +7,7 @@ import math
 from collections.abc import Iterable, Sequence
 from datetime import date, datetime
 from decimal import Decimal
+from typing import TYPE_CHECKING, ClassVar
 
 from pydantic import Field
 
@@ -21,6 +22,9 @@ from remy_finance.registry import (
     ReturnDistribution,
     derive_trade_id,
 )
+
+if TYPE_CHECKING:
+    from remy_finance.baselines.mkt1 import Forecast
 
 
 class SelectionRule(Record):
@@ -92,6 +96,9 @@ class ExpirationFit(Record):
     iv_points: int = 0
     rmse_vol: Dec | None = None
     svi: tuple[tuple[str, Dec], ...] = ()
+    rn_quantiles: tuple[tuple[Dec, Dec], ...] = ()  # (level, S_T / F); EVAL-1 §2.2
+
+    SCHEMA_VERSION: ClassVar[int] = 2  # DR-0032 added rn_quantiles
 
 
 class BaselineRun(Record):
@@ -134,15 +141,14 @@ def build_recommendation(
     receipt_time: datetime,
     rank: int,
     method: str,
-    mean: Decimal,
-    quantiles: Sequence[tuple[Decimal, Decimal]],
-    tail_measures: Sequence[tuple[str, Decimal]],
+    forecast: Forecast,
     search_config: Sequence[tuple[str, str]] = (),
     random_seed: str | None = None,
     fill_reason: str = "baseline: probability of fill not modelled in R1",
 ) -> Recommendation:
     s = candidate.structure
     assert s is not None
+    mean = forecast.mean
     with exact_decimal(s.capital_at_risk, mean):
         car = s.capital_at_risk * candidate.quantity
         dollars = mean * car
@@ -174,11 +180,13 @@ def build_recommendation(
         predicted_return=ReturnDistribution(
             method=method,
             mean=mean,
-            quantiles=tuple(Quantile(probability=p, value=v) for p, v in quantiles),
+            quantiles=tuple(Quantile(probability=p, value=v) for p, v in forecast.quantiles),
+            bins_version=forecast.bins_version,
+            bin_probabilities=tuple(forecast.bin_probabilities),
         ),
         expected_return_pct=mean,
         expected_return_dollars=dollars,
-        tail_measures=tuple(tail_measures),
+        tail_measures=tuple(forecast.tails),
         probability_of_fill=None,
         probability_of_fill_reason=fill_reason,
         exit_policy_id=candidate.exit_policy_id,

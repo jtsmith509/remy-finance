@@ -54,19 +54,22 @@ from remy_finance.baselines.smile import (
     terminal_distribution,
 )
 from remy_finance.core import Candidate, MarketState, OptionQuote, Record, Right
+from remy_finance.core.exact import exact_decimal
 from remy_finance.core.types import PosDec
 from remy_finance.data.timeutil import NEW_YORK
 from remy_finance.movegen.generator import list_hash
-from remy_finance.registry import ADJ_0, Recommendation
+from remy_finance.registry import ADJ_0, EVAL_1_BINS, Recommendation, ReturnBins
 
 YEAR_SECONDS = 365.0 * 86400.0
-QUANTILE_PROBS = (
-    Decimal("0.05"),
-    Decimal("0.25"),
-    Decimal("0.5"),
-    Decimal("0.75"),
-    Decimal("0.95"),
-)
+# EVAL-1 §6 / DR-0032: 15 levels for strategy returns; 17 for S_T / F.
+QUANTILE_PROBS = tuple(
+    Decimal(x)
+    for x in (
+        "0.01", "0.025", "0.05", "0.1", "0.2", "0.3", "0.4", "0.5",
+        "0.6", "0.7", "0.8", "0.9", "0.95", "0.975", "0.99",
+    )
+)  # fmt: skip
+RN_QUANTILE_PROBS = (Decimal("0.001"), *QUANTILE_PROBS, Decimal("0.999"))
 
 
 class Mkt1Config(Record):
@@ -218,7 +221,13 @@ def fit_expiration(
         return reject(f"ARBITRAGE:{e}", **base)
     model = ExpiryModel(symbol, expiration, forward, df, years, svi, dist)
     return model, ExpirationFit.model_validate(
-        {"symbol": symbol, "expiration": expiration, "ok": True, **base}
+        {
+            "symbol": symbol,
+            "expiration": expiration,
+            "ok": True,
+            "rn_quantiles": rn_quantiles(model),
+            **base,
+        }
     )
 
 
@@ -241,21 +250,62 @@ def expected_return(model: ExpiryModel, c: Candidate, cache: VanillaCache | None
     return (payoff - cost) / float(s.capital_at_risk)
 
 
+@dataclass(frozen=True)
+class Forecast:
+    """A candidate's predicted net-return distribution, as recorded (Decimal)."""
+
+    mean: Decimal
+    quantiles: list[tuple[Decimal, Decimal]]
+    tails: list[tuple[str, Decimal]]
+    bins_version: str
+    bin_probabilities: list[Decimal]
+
+
+def _quantiles(
+    values: FloatArray, probs: FloatArray, levels: Sequence[Decimal], places: int
+) -> list[tuple[Decimal, Decimal]]:
+    """Quantiles of a discrete distribution: the smallest value with CDF >= level."""
+    order = np.argsort(values, kind="stable")
+    v, cum = values[order], np.cumsum(probs[order])
+    out = []
+    for p in levels:
+        idx = min(int(np.searchsorted(cum, float(p), side="left")), len(v) - 1)
+        out.append((p, to_decimal_places(float(v[idx]), places)))
+    return out
+
+
+def bin_probabilities(
+    values: FloatArray, probs: FloatArray, bins: ReturnBins, places: int
+) -> list[Decimal]:
+    """Bin masses as Decimals that sum to exactly 1: each is rounded to ``places`` and the
+    rounding residual goes to the largest bin (DR-0032)."""
+    edges = np.array([float(e) for e in bins.edges])
+    idx = np.searchsorted(edges, values, side="left")  # right-closed bins
+    raw = np.bincount(idx, weights=probs, minlength=bins.n_bins)
+    raw = raw / raw.sum()
+    dec = [to_decimal_places(float(x), places) for x in raw]
+    with exact_decimal(*dec):
+        residual = Decimal(1) - sum(dec, Decimal(0))
+    biggest = max(range(len(dec)), key=lambda i: (dec[i], -i))
+    dec[biggest] += residual
+    if dec[biggest] < 0:  # pragma: no cover - residual is at most a few units of 1e-places
+        raise ValueError("bin rounding residual exceeds the largest bin")
+    return dec
+
+
 def return_distribution(
-    model: ExpiryModel, c: Candidate, places: int
-) -> tuple[list[tuple[Decimal, Decimal]], list[tuple[str, Decimal]]]:
-    """Quantiles and tail measures of the predicted net return (per unit)."""
+    model: ExpiryModel, c: Candidate, places: int, bins: ReturnBins = EVAL_1_BINS
+) -> tuple[list[tuple[Decimal, Decimal]], list[tuple[str, Decimal]], list[Decimal]]:
+    """Quantiles, tail measures and bin probabilities of the predicted net return."""
     s = c.structure
     assert s is not None
     cost = float(s.net_premium + s.entry_fees + s.exit_fees)
     r = (model.payoff_on_support(c) - cost) / float(s.capital_at_risk)
+    probs = model.dist.probs
+    quantiles = _quantiles(r, probs, QUANTILE_PROBS, places)
     order = np.argsort(r, kind="stable")
-    r_sorted, p_sorted = r[order], model.dist.probs[order]
+    r_sorted, p_sorted = r[order], probs[order]
     cum = np.cumsum(p_sorted)
-    quantiles = []
-    for p in QUANTILE_PROBS:
-        idx = min(int(np.searchsorted(cum, float(p), side="left")), len(r_sorted) - 1)
-        quantiles.append((p, to_decimal_places(float(r_sorted[idx]), places)))
     tail = 0.05
     take = np.minimum(p_sorted, np.maximum(tail - (cum - p_sorted), 0.0))
     cvar = float(np.dot(take, r_sorted) / tail)
@@ -265,7 +315,14 @@ def return_distribution(
         ("P_loss", to_decimal_places(p_loss, places)),
         ("P_max_loss", to_decimal_places(float(p_sorted[r_sorted <= -0.999999].sum()), places)),
     ]
-    return quantiles, tails
+    return quantiles, tails, bin_probabilities(r, probs, bins, places)
+
+
+def rn_quantiles(model: ExpiryModel, places: int = 8) -> tuple[tuple[Decimal, Decimal], ...]:
+    """Risk-neutral quantiles of S_T / F (EVAL-1 §2.2), recorded in the run log."""
+    return tuple(
+        _quantiles(model.dist.points / model.forward, model.dist.probs, RN_QUANTILE_PROBS, places)
+    )
 
 
 @dataclass(frozen=True)
@@ -295,13 +352,17 @@ class BoardScore:
         assert model is not None
         return model
 
-    def forecast(
-        self, s: Scored
-    ) -> tuple[Decimal, list[tuple[Decimal, Decimal]], list[tuple[str, Decimal]]]:
-        quantiles, tails = return_distribution(
+    def forecast(self, s: Scored) -> Forecast:
+        quantiles, tails, bins = return_distribution(
             self.model_for(s.candidate), s.candidate, self.cfg.return_places
         )
-        return to_decimal_places(s.mean, self.cfg.return_places), quantiles, tails
+        return Forecast(
+            mean=to_decimal_places(s.mean, self.cfg.return_places),
+            quantiles=quantiles,
+            tails=tails,
+            bins_version=EVAL_1_BINS.version,
+            bin_probabilities=bins,
+        )
 
 
 def score_board(
@@ -363,7 +424,7 @@ def run_mkt1(
     recs: list[Recommendation] = []
     artifact = cfg.content_hash()
     for rank, c in enumerate(picks, start=1):
-        mean, quantiles, tails = score.forecast(by_id[id(c)])
+        forecast = score.forecast(by_id[id(c)])
         recs.append(
             build_recommendation(
                 candidate=c,
@@ -375,9 +436,7 @@ def run_mkt1(
                 receipt_time=receipt_time,
                 rank=rank,
                 method=MKT1_METHOD,
-                mean=mean,
-                quantiles=quantiles,
-                tail_measures=tails,
+                forecast=forecast,
                 search_config=(
                     ("ranking_adjustment", ADJ_0),
                     ("selection", cfg.selection.version),

@@ -13,7 +13,7 @@ import json
 from datetime import date
 from decimal import Decimal
 from enum import StrEnum
-from typing import Self
+from typing import ClassVar, Self
 
 from pydantic import Field, field_validator, model_validator
 
@@ -36,16 +36,59 @@ class Quantile(Record):
         return value
 
 
+class ReturnBins(Record):
+    """A versioned categorical binning of net return on capital at risk (EVAL-1 §2.1).
+
+    Bin i is ``(edges[i-1], edges[i]]``; the first is ``(-inf, edges[0]]`` and the last
+    ``(edges[-1], +inf)``. Point masses at maximum loss and gain make a continuous log
+    score undefined for strategy returns, so the log score is taken over these bins.
+    """
+
+    version: str = Field(min_length=1)
+    edges: tuple[Dec, ...] = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def _check(self) -> Self:
+        if list(self.edges) != sorted(set(self.edges)):
+            raise ValueError("bin edges must be strictly increasing")
+        return self
+
+    @property
+    def n_bins(self) -> int:
+        return len(self.edges) + 1
+
+    def index(self, value: Decimal) -> int:
+        """The bin containing ``value`` (right-closed)."""
+        for i, edge in enumerate(self.edges):
+            if value <= edge:
+                return i
+        return len(self.edges)
+
+
+EVAL_1_BINS = ReturnBins(
+    version="EVAL-1-BINS",
+    edges=tuple(Decimal(x) for x in ("-0.99", "-0.5", "-0.25", "0", "0.25", "0.5", "1", "2")),
+)
+KNOWN_BINS = {EVAL_1_BINS.version: EVAL_1_BINS}
+
+
 class ReturnDistribution(Record):
     """Predicted net return on capital at risk (fractions: -1 = lose all capital at risk).
 
-    Baselines record summary quantiles and the mean (handoff R1.1); richer engines may add
-    more quantiles under the same type.
+    ``quantiles``: the predicted quantile function at recorded levels (EVAL-1 §6: baselines
+    record 15 levels). ``bin_probabilities``: the probability of each bin of the named
+    ``bins_version``; they sum to exactly 1.
+
+    Schema 2 (DR-0032) adds the bins.
     """
+
+    SCHEMA_VERSION: ClassVar[int] = 2
 
     method: str = Field(min_length=1)
     mean: Dec
     quantiles: tuple[Quantile, ...] = ()
+    bins_version: str | None = None
+    bin_probabilities: tuple[Dec, ...] = ()
 
     @model_validator(mode="after")
     def _check(self) -> Self:
@@ -55,6 +98,21 @@ class ReturnDistribution(Record):
         values = [q.value for q in self.quantiles]
         if values != sorted(values):
             raise ValueError("quantile values must be non-decreasing")
+        if self.bins_version is None:
+            if self.bin_probabilities:
+                raise ValueError("bin probabilities need a bins_version")
+            return self
+        bins = KNOWN_BINS.get(self.bins_version)
+        if bins is None:
+            raise ValueError(f"unknown bins_version {self.bins_version!r}")
+        if len(self.bin_probabilities) != bins.n_bins:
+            raise ValueError(f"{bins.version} has {bins.n_bins} bins")
+        if any(not 0 <= p <= 1 for p in self.bin_probabilities):
+            raise ValueError("bin probabilities must be in [0, 1]")
+        with exact_decimal(*self.bin_probabilities):
+            total = sum(self.bin_probabilities, Decimal(0))
+        if total != 1:
+            raise ValueError(f"bin probabilities sum to {total}, not exactly 1")
         return self
 
 

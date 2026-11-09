@@ -14,10 +14,13 @@ import pytest
 from remy_finance.baselines.common import BaselineRun
 from remy_finance.baselines.mkt1 import (
     MKT_1,
+    QUANTILE_PROBS,
+    RN_QUANTILE_PROBS,
     Mkt1Config,
     expected_return,
     fit_expiration,
     run_mkt1,
+    score_board,
 )
 from remy_finance.baselines.pricing import black76, implied_vol
 from remy_finance.baselines.smile import LEE_MAX_WING_SLOPE, fit_svi
@@ -176,7 +179,11 @@ def test_recommendations_are_complete_and_registrable(tmp_path: Path) -> None:
     assert r.engine == "MKT-1" and r.mode is Mode.REPLAY
     assert r.artifact_hash == MKT_1.content_hash()
     assert r.probability_of_fill is None and r.probability_of_fill_reason
-    assert len(r.predicted_return.quantiles) == 5
+    dist = r.predicted_return
+    assert [q.probability for q in dist.quantiles] == list(QUANTILE_PROBS)
+    assert len(QUANTILE_PROBS) == 15
+    assert dist.bins_version == "EVAL-1-BINS" and len(dist.bin_probabilities) == 9
+    assert sum(dist.bin_probabilities) == 1
     assert {name for name, _ in r.tail_measures} == {"CVaR_5pct", "P_loss", "P_max_loss"}
     assert r.capital_at_risk <= D(2000)
     reg = Registry.create(registry_path(tmp_path, Mode.REPLAY), Mode.REPLAY)
@@ -230,3 +237,36 @@ def test_vrp_adjustment_must_stay_off() -> None:
 
 def test_time_value_sign() -> None:
     assert S.DF < 1 and math.isclose(black76(100, 100, 0.2, 0, 0.99, True), 0)
+
+
+# ------------------------------------------------------------------ EVAL-1 §6 records (DR-0032)
+
+
+def test_bin_probabilities_agree_with_the_distribution() -> None:
+    board = S.chain(half_spread="0.02", tick="0.01")
+    cands, _ = generate(board)
+    score = score_board(board, cands)
+    for s in score.scored[:200]:
+        f = score.forecast(s)
+        assert sum(f.bin_probabilities) == 1  # exactly
+        assert all(p >= 0 for p in f.bin_probabilities)
+        tails = dict(f.tails)
+        p_le_0 = sum(f.bin_probabilities[:4])  # bins up to (-0.25, 0]
+        assert abs(p_le_0 - tails["P_loss"]) < D("0.02")  # P(r <= 0) vs P(r < 0)
+        assert f.bin_probabilities[0] >= tails["P_max_loss"] - D("1E-7")
+
+
+def test_run_log_records_risk_neutral_quantiles_of_s_over_f() -> None:
+    _, log = run(S.chain())
+    fit = log.fits[0]
+    levels = [p for p, _ in fit.rn_quantiles]
+    values = [v for _, v in fit.rn_quantiles]
+    assert levels == list(RN_QUANTILE_PROBS) and len(levels) == 17
+    assert values == sorted(values)
+    median = float(dict(fit.rn_quantiles)[D("0.5")])
+    lognormal_median = math.exp(-0.5 * S.VOL**2 * S.YEARS)
+    assert median == pytest.approx(lognormal_median, abs=0.002)
+    lo, hi = float(dict(fit.rn_quantiles)[D("0.05")]), float(dict(fit.rn_quantiles)[D("0.95")])
+    sd = S.VOL * math.sqrt(S.YEARS)
+    assert lo == pytest.approx(lognormal_median * math.exp(-1.6449 * sd), abs=0.003)
+    assert hi == pytest.approx(lognormal_median * math.exp(1.6449 * sd), abs=0.003)
