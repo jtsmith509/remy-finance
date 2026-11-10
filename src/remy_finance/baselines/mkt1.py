@@ -105,6 +105,7 @@ class ExpiryModel:
     years: float
     svi: SVI
     dist: Distribution
+    fit_strikes: tuple[float, float] | None = None  # lowest/highest strike in the IV fit
 
     def vanilla(self, right: Right, strike: float) -> float:
         """Undiscounted risk-neutral expected payoff of one option (per share)."""
@@ -219,7 +220,10 @@ def fit_expiration(
         dist = terminal_distribution(svi, forward, df, years, max(lo, 1e-6), hi, cfg.grid_points)
     except ArbitrageError as e:
         return reject(f"ARBITRAGE:{e}", **base)
-    model = ExpiryModel(symbol, expiration, forward, df, years, svi, dist)
+    fit_ks = [forward * math.exp(k) for k in k_pts]
+    model = ExpiryModel(
+        symbol, expiration, forward, df, years, svi, dist, (min(fit_ks), max(fit_ks))
+    )
     return model, ExpirationFit.model_validate(
         {
             "symbol": symbol,

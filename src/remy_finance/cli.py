@@ -780,6 +780,30 @@ def replay_bench(
         typer.echo("TOO SLOW: the execution slot may miss its window and become a gap")
 
 
+@replay_app.command("diagnose")
+def replay_diagnose(
+    date_: Annotated[str, typer.Option("--date", help="A stored replay session, YYYY-MM-DD")],
+    session: SessionOpt = "open",
+    top: Annotated[int, typer.Option(help="How many of the highest predictions to list")] = 15,
+) -> None:
+    """Where do MKT-1's positive predictions come from? (stored REPLAY board; writes nothing)
+
+    For every scored candidate: predicted mean by structure type, split by whether all its
+    legs lie inside the strike range MKT-1's smile was fitted to (OUTSIDE = extrapolated
+    wings), and the highest predictions with their legs, prices and moneyness."""
+    from remy_finance.reports.diagnose import diagnose_board
+    from remy_finance.snapshots.schedule import SnapshotKind
+    from remy_finance.snapshots.store import SnapshotStore
+
+    d, sess = date.fromisoformat(date_), _session(session)
+    store = SnapshotStore(_data_dir() / "snapshots")
+    path = store.find(Mode.REPLAY, d, sess, SnapshotKind.DECISION)
+    if path is None:
+        typer.echo(f"no stored REPLAY decision board for {d} {sess.value}")
+        raise typer.Exit(1)
+    typer.echo(diagnose_board(store.load(path), top=top))
+
+
 @report_app.command("power-inputs")
 def report_power_inputs(mode: ModeOpt = "replay", out: OutOpt = None) -> None:
     """Measured fill rate, sigma and design effect for the power-estimate update."""
