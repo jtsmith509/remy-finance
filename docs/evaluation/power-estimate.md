@@ -88,3 +88,39 @@ Tail exceedances are assumed to share the same correlation as returns. Crashes h
 ## 6. Questions for Josh (answered 2026-11-09)
 1. Are the base assumptions acceptable as the recorded prior (fill rate 70%, σ = 0.7, ρ = 0.10)? Or should the range in §3 be the recorded estimate, with ρ = 0.10 as the central case? **The base case is the centre and the §3 ranges are part of the recorded estimate.**
 2. Should the replay-month update (§5) happen before the live run starts, as proposed, or at Stop Point C? **Before the live run.**
+
+---
+
+## Addendum 2026-11-10: measured inputs from the August 2026 replay (§5)
+**Source:** the replay month re-run with MOVEGEN-2 and MKT-1/RAND-1 v2 (DR-0037). 21 decision sessions (3–31 August 2026), every position closed by 30 October; 420 recommendations; reports `data/reports/power-inputs-2026-08-v2.md` and `replay-2026-08-v2-cumulative.md` on the Mac mini. **Replay data are planning inputs only, never evidence of edge.** The original estimate above is unchanged.
+
+| Input | Prior | MKT-1 v2 measured | RAND-1 v2 measured | Used from here on |
+|---|---|---|---|---|
+| Recommendations per day | 10 | 10.0 | 10.0 | 10 (confirmed) |
+| Fill rate | 70% | **98%** | **83%** | measured, per baseline |
+| σ, the sd of net return on capital at risk | 0.7 | **0.91** | **1.08** | measured, per baseline |
+| Design effect (clusters by expiration week) | — | 0.6 (11 clusters) | 2.1 (10 clusters) | **not used** |
+| ρ | 0.10 | implied 0.00 | implied 0.006 | **prior 0.10 kept** |
+
+**Why the measured design effect isn't used.** One month is a single market path. 10–11 clusters are far too few to estimate a variance ratio, and a mix of long calls and long puts makes the within-week correlation *negative*, which drives the estimate below 1. A design effect below 1 would claim that overlapping trades are *more* informative than independent ones; nothing supports that for planning. ρ is re-estimated once several months of prospective data exist, with clusters wide enough to capture shared monthly shocks.
+
+**Recomputed with the measured fill rate and σ and the prior ρ = 0.10:**
+
+| Case | Filled per month | Effective per month | Months to detect δ = 5% / 10% / 20% | Smallest δ detectable in 12 months |
+|---|---|---|---|---|
+| Prior | 147 | 9.4 | 129 / 32 / 8 | 16% |
+| MKT-1 v2 | 206 | 9.6 | 215 / 54 / 13 | 21% |
+| RAND-1 v2 | 175 | 9.5 | 300 / 75 / 19 | 25% |
+| MKT-1 vs RAND-1, per arm (σ 1.0, fill 90%) | about 189 | about 9.5 | 518 / 130 / 32 | — |
+
+**Sensitivity to ρ** (σ 1.0, fill 90%): ρ = 0.05 gives 136 / 34 / 9 months, and ρ = 0.20 gives 505 / 126 / 32 months.
+
+**What changes.**
+- The higher measured σ makes detection **slower** than the prior estimate: roughly 1.7–2.3× longer.
+- Higher fill rates barely help, because effective observations stay capped near 1/ρ.
+- The conclusions in §4 stand and are stronger. R1 can't detect an edge. The first confirmatory analysis at 12 months (EVAL-1 §5) can only detect edges of roughly 20–25% per trade, and smaller edges need years or lower correlation.
+
+**Related findings (for the R1 memo, not power inputs).**
+1. **Sanity property.** With the mid-anchored mean, every prediction on the 3 August board is ≤ −0.2%. MKT-1's picks predicted −0.1% on average and realized −18.8%. Long calls and puts realized −32% and −25%, which is consistent with a volatility risk premium that MKT-1 deliberately leaves out (VRP off in R1).
+2. **Tail coverage looks worse than it is**, for two reasons: realized returns are measured against capital at risk at the *decision* price, so a lost premium filled at a worse execution price counts below −100%; and the forecast has no slippage model. Both are as specified by EVAL-1, and both go in the R1 memo.
+3. **Coverage.** The arbitrage check rejected 250 of 376 expirations on 3 August ("call prices not decreasing with slope in [−DF, 0]"), so MKT-1 and RAND-1 scored only about 13% of candidates. That's an open item in DR-0037.
