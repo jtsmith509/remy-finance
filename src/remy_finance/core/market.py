@@ -17,7 +17,6 @@ from typing import Self
 
 from pydantic import Field, field_validator, model_validator
 
-from remy_finance.core import canonical
 from remy_finance.core.enums import (
     CorporateActionType,
     DividendType,
@@ -242,5 +241,6 @@ class MarketState(Record):
 
     @property
     def snapshot_id(self) -> str:
-        """The content hash of the board (not a stored field, so it can't be circular)."""
-        return canonical.sha256_hex(self.canonical_json())
+        """The content hash of the board (not a stored field, so it can't be circular).
+        Computed once per instance: hashing a full board takes seconds."""
+        return self.content_hash()

@@ -162,6 +162,14 @@ class Registry:
         self.path = path
         self._conn = conn
         self.mode = mode
+        # Read caches. The tables are append-only, so parsed rows never go stale: each read
+        # tops the cache up with rows newer than the last one seen (including rows other
+        # processes wrote). ``verify`` never uses them: it re-reads and re-parses raw rows.
+        self._recs: list[Recommendation] = []
+        self._recs_by_id: dict[str, Recommendation] = {}
+        self._recs_seq = 0
+        self._events_by_trade: dict[str, list[tuple[int, JournalEvent]]] = defaultdict(list)
+        self._events_seq = 0
 
     # ------------------------------------------------------------------ lifecycle
 
@@ -262,25 +270,38 @@ class Registry:
 
     # ------------------------------------------------------------------ reads
 
+    def _load_recommendations(self) -> None:
+        rows = self._conn.execute(
+            "SELECT seq, record_json FROM recommendations WHERE seq > ? ORDER BY seq",
+            (self._recs_seq,),
+        )
+        for seq, text in rows:
+            rec = Recommendation.from_canonical_json(text)
+            self._recs.append(rec)
+            self._recs_by_id[rec.trade_id] = rec
+            self._recs_seq = int(seq)
+
     def recommendation(self, trade_id: str) -> Recommendation | None:
-        row = self._conn.execute(
-            "SELECT record_json FROM recommendations WHERE trade_id = ?", (trade_id,)
-        ).fetchone()
-        return None if row is None else Recommendation.from_canonical_json(row[0])
+        if trade_id not in self._recs_by_id:
+            self._load_recommendations()
+        return self._recs_by_id.get(trade_id)
 
     def recommendations(self) -> list[Recommendation]:
-        rows = self._conn.execute("SELECT record_json FROM recommendations ORDER BY seq")
-        return [Recommendation.from_canonical_json(r[0]) for r in rows]
+        self._load_recommendations()
+        return list(self._recs)
 
     def events(self, trade_id: str) -> list[tuple[int, JournalEvent]]:
         return self._events(self._conn, trade_id)
 
-    @staticmethod
-    def _events(conn: sqlite3.Connection, trade_id: str) -> list[tuple[int, JournalEvent]]:
+    def _events(self, conn: sqlite3.Connection, trade_id: str) -> list[tuple[int, JournalEvent]]:
         rows = conn.execute(
-            "SELECT seq, record_json FROM journal WHERE trade_id = ? ORDER BY seq", (trade_id,)
+            "SELECT seq, trade_id, record_json FROM journal WHERE seq > ? ORDER BY seq",
+            (self._events_seq,),
         )
-        return [(int(s), JournalEvent.from_canonical_json(j)) for s, j in rows]
+        for seq, tid, text in rows:
+            self._events_by_trade[tid].append((int(seq), JournalEvent.from_canonical_json(text)))
+            self._events_seq = int(seq)
+        return list(self._events_by_trade.get(trade_id, ()))
 
     def rows(self, table: Table, after_seq: int = 0) -> list[Row]:
         cur = self._conn.execute(

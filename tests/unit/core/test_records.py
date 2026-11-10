@@ -393,3 +393,32 @@ def test_board_rejects_duplicates_and_outsiders() -> None:
         f.market_state(option_quotes=(f.option_quote("100", sym="ABC"),))
     with pytest.raises(ValidationError, match="duplicate underlyings"):
         f.market_state(underlyings=("XYZ", "XYZ"))
+
+
+# ------------------------------------------------------------------ hash caching (performance)
+
+
+def test_cached_content_hash_is_exact_and_never_stale() -> None:
+    from remy_finance.core import canonical
+    from remy_finance.movegen.generator import generate, list_hash
+    from tests.factories import bull_call_spread, market_state
+
+    s = bull_call_spread()
+    fresh = canonical.sha256_hex(canonical.canonical_json(s))
+    assert s.content_hash() == fresh == s.content_hash()  # cached on the second call
+    changed = s.model_copy(update={"fee_version": "FEES-X"})  # revalidated new instance
+    assert changed.content_hash() != fresh
+    assert changed.content_hash() == canonical.sha256_hex(canonical.canonical_json(changed))
+    assert s == type(s).model_validate(dict(s))  # equality ignores the cache
+    assert (
+        "_remy_content_hash" not in s.model_dump()
+        and "_remy_content_hash" not in s.canonical_json()
+    )
+
+    board = market_state()
+    cands, summary = generate(board)
+    for c in cands:  # list_hash primed every candidate with a memo-computed hash
+        assert c.content_hash() == canonical.sha256_hex(canonical.canonical_json(c))
+    rebuilt = tuple(type(c).model_validate(dict(c)) for c in cands)  # fresh, unprimed
+    assert list_hash(rebuilt) == summary.list_hash
+    assert board.snapshot_id == canonical.sha256_hex(canonical.canonical_json(board))

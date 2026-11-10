@@ -71,11 +71,17 @@ class MovegenSummary(Record):
 
 def list_hash(candidates: tuple[Candidate, ...]) -> str:
     """SHA-256 over the ordered candidate content hashes. One canonical memo is shared, so
-    contracts and legs reused across candidates are serialized once (same bytes, faster)."""
+    contracts and legs reused across candidates are serialized once (same bytes, faster).
+    Each candidate keeps its hash, so later uses (sampling keys, trade IDs, run logs) don't
+    serialize it again."""
     h = hashlib.sha256()
     memo: canonical.Memo = {}
     for c in candidates:
-        h.update(canonical.content_hash(c, memo).encode("ascii"))
+        ch = c.__dict__.get("_remy_content_hash")
+        if ch is None:
+            ch = canonical.content_hash(c, memo)
+            c._prime_content_hash(ch)
+        h.update(ch.encode("ascii"))
         h.update(b"\n")
     return h.hexdigest()
 

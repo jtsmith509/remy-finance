@@ -284,3 +284,19 @@ def test_backup_is_a_verifiable_copy(reg: Registry, tmp_path: Path) -> None:
         assert copy.head("journal") == reg.head("journal")
     with pytest.raises(FileExistsError):
         reg.backup(tmp_path / "backup", now=datetime(2026, 11, 9, 23, 0, tzinfo=UTC))
+
+
+def test_read_caches_see_rows_written_by_another_handle(reg: Registry) -> None:
+    """The read caches top up from the database, so a second process's appends appear."""
+    other = Registry.open(reg.path, Mode.PROSPECTIVE)
+    rec = recommendation()
+    assert other.recommendations() == [] and other.recommendation(rec.trade_id) is None
+    reg.add_recommendation(rec)
+    reg.add_event(event(rec, E.ORDER_SUBMITTED))
+    assert other.recommendation(rec.trade_id) == rec
+    assert [e.kind for _, e in other.events(rec.trade_id)] == [E.ORDER_SUBMITTED]
+    other.add_event(event(rec, E.LEG_FILLED, minutes=6))  # lifecycle sees reg's event
+    assert [e.kind for _, e in reg.events(rec.trade_id)] == [E.ORDER_SUBMITTED, E.LEG_FILLED]
+    with pytest.raises(RegistryError):
+        reg.add_event(event(rec, E.ORDER_SUBMITTED, minutes=7))  # cache-backed history is current
+    other.close()

@@ -22,7 +22,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 
 from remy_finance.baselines.common import BaselineRun, underlyings_picked_today
-from remy_finance.baselines.mkt1 import run_mkt1
+from remy_finance.baselines.mkt1 import BoardScore, run_mkt1, score_board
 from remy_finance.baselines.rand1 import run_rand1
 from remy_finance.core import Candidate, MarketState, Mode
 from remy_finance.data.protocol import OfficialCloseSource
@@ -60,6 +60,8 @@ class Pipeline:
             raise ValueError(f"{board.mode.value} board in the {self.mode.value} pipeline")
         day = et_date(board.as_of)
         candidates: tuple[Candidate, ...] | None = None
+        score: BoardScore | None = None
+        list_digest: str | None = None
         selected: list[str] = []
         for name, runner in BASELINES:
             done = self.runs.find(
@@ -69,7 +71,9 @@ class Pipeline:
                 selected += self.runs.load(done).selected
                 continue
             if candidates is None:
-                candidates, _ = generate(board)
+                candidates, summary = generate(board)
+                score = score_board(board, candidates)  # shared: MKT-1 and RAND-1 (DR-0031)
+                list_digest = summary.list_hash
             excluded = underlyings_picked_today(self.registry, name, day, before=board.as_of)
             recs, log = runner(
                 board,
@@ -77,6 +81,8 @@ class Pipeline:
                 code_commit=self.code_commit,
                 receipt_time=self.clock(),
                 excluded_underlyings=excluded,
+                score=score,
+                candidates_hash=list_digest,
             )
             for rec in recs:
                 if self.registry.recommendation(rec.trade_id) is None:

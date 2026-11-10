@@ -415,9 +415,15 @@ def run_mkt1(
     excluded_underlyings: frozenset[str] = frozenset(),
     cfg: Mkt1Config = MKT_1,
     vrp_hook: VrpHook | None = None,
+    score: BoardScore | None = None,
+    candidates_hash: str | None = None,
 ) -> tuple[list[Recommendation], BaselineRun]:
-    """Score every recommendable candidate on ``board`` and pick MKT-1's recommendations."""
-    score = score_board(board, candidates, cfg, vrp_hook)
+    """Score every recommendable candidate on ``board`` and pick MKT-1's recommendations.
+
+    ``score`` and ``candidates_hash`` let a caller share one scoring pass and one list
+    hash between baselines (they must come from this board and these candidates)."""
+    if score is None or score.cfg != cfg:
+        score = score_board(board, candidates, cfg, vrp_hook)
     ranked = sorted(score.scored, key=lambda s: (-s.mean, s.index))
     by_id = {id(s.candidate): s for s in ranked}
     picks = apply_caps((s.candidate for s in ranked), cfg.selection, excluded_underlyings)
@@ -453,7 +459,7 @@ def run_mkt1(
         snapshot_id=board.snapshot_id,
         decision_time=board.as_of,
         recorded_at=receipt_time,
-        movegen_list_hash=list_hash(tuple(candidates)),
+        movegen_list_hash=candidates_hash or list_hash(tuple(candidates)),
         n_candidates=len(candidates),
         n_recommendable=len(score.usable),
         n_scored=len(score.scored),

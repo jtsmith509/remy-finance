@@ -31,6 +31,7 @@ from remy_finance.baselines.common import (
 )
 from remy_finance.baselines.mkt1 import (
     MKT_1,
+    BoardScore,
     Mkt1Config,
     Scored,
     score_board,
@@ -67,8 +68,11 @@ def run_rand1(
     receipt_time: datetime,
     excluded_underlyings: frozenset[str] = frozenset(),
     cfg: Rand1Config = RAND_1,
+    score: BoardScore | None = None,
+    candidates_hash: str | None = None,
 ) -> tuple[list[Recommendation], BaselineRun]:
-    score = score_board(board, candidates, cfg.forecast_model)
+    if score is None or score.cfg != cfg.forecast_model:
+        score = score_board(board, candidates, cfg.forecast_model)
     seed = seed_for(board.snapshot_id, cfg.version)
     keyed = sorted(
         ((sample_key(seed, s.candidate.content_hash()), s) for s in score.scored),
@@ -109,7 +113,7 @@ def run_rand1(
         snapshot_id=board.snapshot_id,
         decision_time=board.as_of,
         recorded_at=receipt_time,
-        movegen_list_hash=list_hash(tuple(candidates)),
+        movegen_list_hash=candidates_hash or list_hash(tuple(candidates)),
         n_candidates=len(candidates),
         n_recommendable=len(score.usable),
         n_scored=len(score.scored),

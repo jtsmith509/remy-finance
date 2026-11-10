@@ -10,6 +10,8 @@ from pydantic import BaseModel, ConfigDict, model_validator
 
 from remy_finance.core import canonical
 
+_HASH_KEY = "_remy_content_hash"  # not a field: excluded from equality and serialization
+
 
 class Record(BaseModel):
     """Frozen pydantic model with canonical JSON and a SHA-256 content hash.
@@ -38,7 +40,17 @@ class Record(BaseModel):
         return canonical.canonical_json(self)
 
     def content_hash(self) -> str:
-        return canonical.sha256_hex(self.canonical_json())
+        """SHA-256 of the canonical JSON, computed once per instance (records are frozen)."""
+        cached = self.__dict__.get(_HASH_KEY)
+        if cached is None:
+            cached = canonical.sha256_hex(self.canonical_json())
+            self.__dict__[_HASH_KEY] = cached
+        return str(cached)
+
+    def _prime_content_hash(self, value: str) -> None:
+        """Store a hash computed elsewhere for this exact instance (e.g. with a shared
+        canonical memo); it must equal ``content_hash()``."""
+        self.__dict__[_HASH_KEY] = value
 
     @classmethod
     def from_canonical_json(cls, text: str | bytes) -> Self:
