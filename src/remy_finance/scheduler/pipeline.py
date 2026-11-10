@@ -17,6 +17,7 @@ Every step is idempotent: re-running it after a crash, or twice, writes nothing 
 
 from __future__ import annotations
 
+import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -44,6 +45,7 @@ class Pipeline:
     code_commit: str
     clock: Callable[[], datetime]
     engine: PaperEngine = field(init=False)
+    timings: list[str] = field(default_factory=list)  # per decision board, for the logs
 
     def __post_init__(self) -> None:
         self.engine = PaperEngine(self.registry)
@@ -71,9 +73,15 @@ class Pipeline:
                 selected += self.runs.load(done).selected
                 continue
             if candidates is None:
+                t0 = time.perf_counter()
                 candidates, summary = generate(board)
+                t1 = time.perf_counter()
                 score = score_board(board, candidates)  # shared: MKT-1 and RAND-1 (DR-0031)
                 list_digest = summary.list_hash
+                self.timings.append(
+                    f"{board.session.value} {day}: {len(candidates)} candidates, "
+                    f"movegen {t1 - t0:.0f}s, scoring {time.perf_counter() - t1:.0f}s"
+                )
             excluded = underlyings_picked_today(self.registry, name, day, before=board.as_of)
             recs, log = runner(
                 board,

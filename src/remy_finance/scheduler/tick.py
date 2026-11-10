@@ -207,6 +207,9 @@ class Tick:
             else:
                 picks = self.pipeline.recommend(decision)
                 self.markers.mark(day, f"{key}-recommend", ",".join(picks))
+                for line in self.pipeline.timings:
+                    self.log(line)
+                self.pipeline.timings.clear()
                 self.log(f"{session.value}: {len(picks)} recommendations")
 
         exec_start = snapshot_time(day, session, SnapshotKind.EXECUTION)

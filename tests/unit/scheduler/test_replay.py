@@ -147,3 +147,22 @@ def test_design_effect() -> None:
     assert design_effect([1.0, 2.0, 3.0], ["a", "a", "a"]) == (None, 1)
     deff, _ = design_effect([1.0, -1.0, 1.0, -1.0], ["a", "a", "b", "b"])
     assert deff == pytest.approx(0.0)
+
+
+def test_replay_bench_times_a_stored_board_and_writes_nothing(
+    data: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from typer.testing import CliRunner
+
+    import remy_finance.cli as cli
+    from remy_finance.snapshots.store import SnapshotStore
+
+    monkeypatch.setenv("REMY_DATA_DIR", str(data))
+    board = build(START, Session.OPEN, SnapshotKind.DECISION, SYMS, "T")
+    SnapshotStore(data / "snapshots").write(board)
+    r = CliRunner().invoke(cli.app, ["replay", "bench", "--date", START.isoformat()])
+    assert r.exit_code == 0, r.output
+    assert "movegen" in r.output and "LONG_STRANGLE" in r.output and "OK:" in r.output
+    assert not (data / "registry").exists() and not (data / "runs").exists()
+    r = CliRunner().invoke(cli.app, ["replay", "bench", "--date", "2026-08-03"])
+    assert r.exit_code == 1 and "no stored REPLAY decision board" in r.output

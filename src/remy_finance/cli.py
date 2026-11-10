@@ -721,6 +721,65 @@ def replay_run(
         typer.echo(f"note: {n}")
 
 
+@replay_app.command("bench")
+def replay_bench(
+    date_: Annotated[str, typer.Option("--date", help="A stored replay session, YYYY-MM-DD")],
+    session: SessionOpt = "open",
+) -> None:
+    """Time movegen, scoring and both baselines on a stored REPLAY decision board.
+
+    Writes nothing: the timing check for the live run's 5-minute recommendation budget."""
+    from datetime import timedelta
+
+    from remy_finance.baselines.mkt1 import run_mkt1, score_board
+    from remy_finance.baselines.rand1 import run_rand1
+    from remy_finance.movegen.generator import generate
+    from remy_finance.snapshots.schedule import SnapshotKind
+    from remy_finance.snapshots.store import SnapshotStore
+
+    d, sess = date.fromisoformat(date_), _session(session)
+    store = SnapshotStore(_data_dir() / "snapshots")
+    path = store.find(Mode.REPLAY, d, sess, SnapshotKind.DECISION)
+    if path is None:
+        typer.echo(f"no stored REPLAY decision board for {d} {sess.value}")
+        raise typer.Exit(1)
+    t = time.perf_counter()
+    board = store.load(path)
+    typer.echo(f"load {time.perf_counter() - t:.1f}s: {len(board.option_quotes)} quotes")
+    t = time.perf_counter()
+    cands, summary = generate(board)
+    gen = time.perf_counter() - t
+    by_type = Counter(c.structure_type.value for c in cands if c.structure_type)
+    typer.echo(f"movegen {gen:.1f}s: {len(cands)} candidates")
+    for name, n in by_type.most_common():
+        typer.echo(f"  {name:<22} {n:>9,}")
+    t = time.perf_counter()
+    score = score_board(board, cands)
+    typer.echo(f"scoring {time.perf_counter() - t:.1f}s: {len(score.scored)} scored")
+    receipt = board.as_of + timedelta(seconds=30)
+    t = time.perf_counter()
+    for run in (run_mkt1, run_rand1):
+        run(
+            board,
+            cands,
+            code_commit="bench-no-commit",
+            receipt_time=receipt,
+            score=score,
+            candidates_hash=summary.list_hash,
+        )
+    base = time.perf_counter() - t
+    step = gen + base
+    typer.echo(f"both baselines {base:.1f}s; recommendation step {step:.0f}s")
+    # Live tick: decision fetch, then this step, then the execution capture, which starts
+    # at decision as_of + 5 min at the earliest and must finish by scheduled + 15 min.
+    if step <= 240:
+        typer.echo("OK: the execution quote can be taken at about decision + 5 min")
+    elif step <= 600:
+        typer.echo("SLOW: the execution quote will be later than decision + 5 min (still valid)")
+    else:
+        typer.echo("TOO SLOW: the execution slot may miss its window and become a gap")
+
+
 @report_app.command("power-inputs")
 def report_power_inputs(mode: ModeOpt = "replay", out: OutOpt = None) -> None:
     """Measured fill rate, sigma and design effect for the power-estimate update."""

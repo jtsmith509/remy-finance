@@ -164,7 +164,12 @@ class ReplayDriver:
             decision = self._board(store, d, session, SnapshotKind.DECISION, None, summary)
             if in_range:
                 p.clock = _fixed(decision.as_of + RECEIPT_DELAY)
-                summary.recommended += len(p.recommend(decision))
+                t0 = time.perf_counter()
+                picks = p.recommend(decision)
+                summary.recommended += len(picks)
+                for line in p.timings:
+                    self.log(f"{line}; recommend total {time.perf_counter() - t0:.0f}s")
+                p.timings.clear()
             execution = self._board(store, d, session, SnapshotKind.EXECUTION, decision, summary)
             p.clock = _fixed(execution.as_of + RECORD_DELAY)
             p.fill_entries(decision, execution)
