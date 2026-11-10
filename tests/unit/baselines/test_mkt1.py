@@ -337,3 +337,34 @@ def test_v2_distribution_is_shifted_to_the_mean_and_stays_in_bounds() -> None:
         assert values == sorted(values)
         assert float(values[0]) >= -1.000001  # never worse than losing all capital at risk
         assert sum(f.bin_probabilities) == 1
+
+
+# ------------------------------------------------------------------ arbitrage-free fit (DR-0038)
+
+
+def test_durrleman_condition_detects_butterfly_arbitrage() -> None:
+    from remy_finance.baselines.smile import ARB_K, SVI
+
+    calm = SVI(a=0.004, b=0.05, rho=-0.5, m=0.0, sigma=0.1)
+    assert calm.butterfly_free() and np.min(calm.durrleman_g(ARB_K)) > 0
+    # within Lee's bound and with positive variance, but a kinked, near-vertical left wing
+    steep = SVI(a=0.0001, b=1.0, rho=-0.99, m=0.0, sigma=0.005)
+    assert steep.b * (1 + abs(steep.rho)) <= 2 and steep.min_total_variance > 0
+    assert not steep.butterfly_free()
+
+
+def test_steep_skew_that_v2_rejected_now_fits_arbitrage_free() -> None:
+    """A moderate equity-style put skew: v2's fit matched the quotes but its extrapolated
+    wing implied call-spread arbitrage, so the expiration was rejected (as in 250 of 376
+    expirations on the 3 August 2026 board). v3 only accepts arbitrage-free smiles."""
+    strikes = tuple(60 + 2.5 * i for i in range(33))
+
+    def vol(k: float) -> float:
+        return max(0.12, 0.25 - 0.3 * math.log(k / 100.0))
+
+    board = S.chain(half_spread="0.02", tick="0.01", strikes=strikes, vol_of=vol)
+    model, fit = fit_expiration(board, "XYZ", S.EXPIRY)
+    assert fit.ok, fit.reason
+    assert model is not None and model.svi.butterfly_free()
+    assert float(fit.rmse_vol) < 0.005  # still a close fit to the quotes  # type: ignore[arg-type]
+    assert np.all(model.dist.probs >= 0)

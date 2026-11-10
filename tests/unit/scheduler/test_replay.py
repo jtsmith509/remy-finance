@@ -9,6 +9,7 @@ from pathlib import Path
 
 import pytest
 
+from remy_finance.baselines.mkt1 import MKT_1
 from remy_finance.core import MarketState, Mode, OfficialClose, Session
 from remy_finance.data import FixtureSource
 from remy_finance.data.timeutil import et_at, session_close
@@ -132,13 +133,13 @@ def test_measured_power_inputs(data: Path) -> None:
     with Registry.open(registry_path(data, Mode.REPLAY)) as reg:
         outs = outcomes(reg)
     mkt = [o for o in outs if o.rec.engine == "MKT-1"]
-    m = measure("MKT-1 v2", mkt, trading_days=3)
+    m = measure(f"MKT-1 v{MKT_1.engine_version}", mkt, trading_days=3)
     assert m.recs_per_day == pytest.approx(3.0)
     assert m.fill_rate is not None and 0 < m.fill_rate <= 1
     assert m.sigma is not None and m.sigma > 0
     text = measured_report(outs, 3, "REPLAY")
     assert "Planning inputs only; not evidence of edge" in text
-    assert "| MKT-1 v2 |" in text and "| prior (power-estimate.md) |" in text
+    assert f"| MKT-1 v{MKT_1.engine_version} |" in text and "| prior (power-estimate.md) |" in text
 
 
 def test_design_effect() -> None:

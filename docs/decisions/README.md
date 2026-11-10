@@ -39,5 +39,6 @@
 | [DR-0035](DR-0035-long-volatility-structures.md) | R0 amendment: long-volatility debit structures (MOVEGEN-2) | R0 amendment | accepted |
 | [DR-0036](DR-0036-sentiment-archive.md) | Narrow prospective archive of public text (framework; build after Stop Point C) | post-R1 | accepted |
 | [DR-0037](DR-0037-mkt1-v2.md) | MKT-1 v2 (mid-anchored mean, DF from rates); redo the replay month | R1 | accepted |
+| [DR-0038](DR-0038-arbitrage-free-svi.md) | Arbitrage-free SVI fit (MKT-1 v3) | R1 | accepted |
 
 Each record has these sections: context, options considered, decision, consequences. Status stays *proposed* until Josh confirms it. A confirmed DR is superseded only by a new, linked DR; it is never edited in place.

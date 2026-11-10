@@ -4,7 +4,10 @@ Smile: raw SVI in log-moneyness ``k = ln(K/F)``, total implied variance
 ``w(k) = a + b (rho (k - m) + sqrt((k - m)^2 + sigma^2))``, constrained to b >= 0,
 |rho| <= 1, positive minimum variance, sigma >= 0.005 and Lee's wing bound
 b (1 + |rho|) <= 2 (otherwise noisy far-out-of-the-money quotes produce near-vertical
-wings). It is fitted with the quasi-explicit method: for fixed (m, sigma) the other three
+wings), and **no butterfly arbitrage**: Durrleman's g(k) >= 0 over log-moneyness [-3, 3]
+(DR-0038). The optimiser only ever considers admissible smiles, so it returns the best
+arbitrage-free fit; the distribution's own checks below remain the final gate.
+It is fitted with the quasi-explicit method: for fixed (m, sigma) the other three
 parameters solve a linear least-squares problem; (m, sigma) are found by a grid search
 refined with Nelder-Mead.
 All steps are deterministic.
@@ -32,6 +35,10 @@ from remy_finance.baselines.pricing import FloatArray, black76_calls
 
 LEE_MAX_WING_SLOPE = 2.0  # Roger Lee: total variance grows at most 2|k| in the wings
 MIN_SIGMA = 0.005
+# Butterfly-arbitrage check (DR-0038): Durrleman's g(k) >= 0 on this log-moneyness range,
+# which covers every strike grid MKT-1 builds (S/F from about 0.05 to 20).
+ARB_K = np.linspace(-3.0, 3.0, 601)
+ARB_TOL = 1e-9
 
 
 @dataclass(frozen=True)
@@ -45,6 +52,20 @@ class SVI:
     def total_variance(self, k: FloatArray) -> FloatArray:
         x = k - self.m
         return self.a + self.b * (self.rho * x + np.sqrt(x * x + self.sigma**2))
+
+    def durrleman_g(self, k: FloatArray) -> FloatArray:
+        """Gatheral's butterfly-arbitrage function for an SVI slice. g(k) >= 0 for all k is
+        equivalent to a non-negative risk-neutral density (no butterfly arbitrage); with
+        Lee's wing bound it also keeps call prices convex with slope in [-DF, 0]."""
+        x = k - self.m
+        root = np.sqrt(x * x + self.sigma**2)
+        w = self.a + self.b * (self.rho * x + root)
+        w1 = self.b * (self.rho + x / root)
+        w2 = self.b * self.sigma**2 / root**3
+        return (1 - k * w1 / (2 * w)) ** 2 - (w1 * w1 / 4) * (1 / w + 0.25) + w2 / 2
+
+    def butterfly_free(self) -> bool:
+        return bool(np.min(self.durrleman_g(ARB_K)) >= -ARB_TOL)
 
     @property
     def min_total_variance(self) -> float:
@@ -75,6 +96,8 @@ def _inner(k: FloatArray, w: FloatArray, m: float, sigma: float) -> tuple[SVI, f
     else:
         svi = SVI(a=float(a), b=float(c / sigma), rho=float(d / c), m=m, sigma=sigma)
     if svi.min_total_variance <= 0 or svi.b * (1 + abs(svi.rho)) > LEE_MAX_WING_SLOPE:
+        return None
+    if not svi.butterfly_free():  # only arbitrage-free smiles are admissible (DR-0038)
         return None
     resid = svi.total_variance(k) - w
     return svi, float(np.dot(resid, resid))

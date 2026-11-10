@@ -155,3 +155,34 @@ uv run remy report cumulative --mode replay --out data/reports/replay-2026-08-v2
 ```bash
 uv run remy replay diagnose --date 2026-08-03 --session open
 ```
+
+### Third run: MKT-1/RAND-1 v3 (DR-0038)
+The same steps with new labels. Archive the v2 run first:
+
+```bash
+git pull
+```
+
+```bash
+uv run remy replay archive --label 2026-08-movegen2-mkt1v2
+```
+
+```bash
+uv run remy replay run --start 2026-08-03 --end 2026-08-31 2>&1 | tee data/logs/replay-2026-08-v3.log
+```
+
+```bash
+uv run remy registry verify --mode replay
+```
+
+```bash
+uv run remy report cumulative --mode replay --out data/reports/replay-2026-08-v3-cumulative.md
+```
+
+```bash
+uv run remy report power-inputs --mode replay --out data/reports/power-inputs-2026-08-v3.md
+```
+
+```bash
+uv run remy replay diagnose --date 2026-08-03 --session open > data/reports/diagnose-2026-08-03-v3.txt
+```

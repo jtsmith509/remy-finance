@@ -78,7 +78,7 @@ RN_QUANTILE_PROBS = (Decimal("0.001"), *QUANTILE_PROBS, Decimal("0.999"))
 
 class Mkt1Config(Record):
     version: str = "MKT-1"
-    engine_version: str = "2"  # DR-0037: mid-anchored mean, discount factor from rates
+    engine_version: str = "3"  # DR-0037 (mid-anchored mean, DF from rates); DR-0038 (fit)
     parity_pairs: int = Field(default=8, ge=3)
     min_parity_pairs: int = Field(default=3, ge=2)
     discount: str = "RATES"  # DF = exp(-r T) from the board's point-in-time rates (DR-0037)
