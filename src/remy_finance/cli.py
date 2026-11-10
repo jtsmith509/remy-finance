@@ -721,6 +721,41 @@ def replay_run(
         typer.echo(f"note: {n}")
 
 
+@replay_app.command("archive")
+def replay_archive(
+    label: Annotated[str, typer.Option(help="Archive folder name, e.g. 2026-08-movegen1-mkt1v1")],
+) -> None:
+    """Move the REPLAY registry and replay run logs to data/archive/LABEL (DR-0037).
+
+    Nothing is deleted. Stored snapshots stay where they are, so the next replay reuses them.
+    The PROSPECTIVE registry is never touched."""
+    import re
+    import shutil
+
+    if not re.fullmatch(r"[A-Za-z0-9._-]+", label):
+        raise typer.BadParameter("label: letters, digits, '.', '_' and '-' only")
+    data = _data_dir()
+    dest = data / "archive" / label
+    if dest.exists():
+        typer.echo(f"{dest} already exists; choose another label")
+        raise typer.Exit(1)
+    from remy_finance.registry import registry_path
+
+    reg = registry_path(data, Mode.REPLAY)
+    moves = [p for p in (reg, Path(f"{reg}-wal"), Path(f"{reg}-shm")) if p.exists()]
+    runs = data / "runs" / "replay"
+    if runs.exists():
+        moves.append(runs)
+    if not moves:
+        typer.echo("nothing to archive: no replay registry or replay run logs")
+        raise typer.Exit(1)
+    dest.mkdir(parents=True)
+    for p in moves:
+        shutil.move(str(p), str(dest / p.name))
+        typer.echo(f"moved {p} -> {dest / p.name}")
+    typer.echo("done; the next `remy replay run` starts a fresh replay registry")
+
+
 @replay_app.command("bench")
 def replay_bench(
     date_: Annotated[str, typer.Option("--date", help="A stored replay session, YYYY-MM-DD")],

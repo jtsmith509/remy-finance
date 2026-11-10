@@ -24,7 +24,7 @@ from remy_finance.baselines.mkt1 import (
 )
 from remy_finance.baselines.pricing import black76, implied_vol
 from remy_finance.baselines.smile import LEE_MAX_WING_SLOPE, fit_svi
-from remy_finance.core import Candidate, MarketState, Mode, Right
+from remy_finance.core import Candidate, MarketState, Mode, Right, StructureType
 from remy_finance.movegen.generator import generate
 from remy_finance.registry import Recommendation, Registry, registry_path
 from tests.unit.baselines import synthetic as S
@@ -200,20 +200,38 @@ def test_deterministic() -> None:
     assert log_a.content_hash() == log_b.content_hash()
 
 
-def test_large_positive_prediction_is_a_logged_bug_signal_not_a_pick() -> None:
+def test_v2_mean_is_immune_to_a_mispriced_quote() -> None:
+    """v1 valued a 115C quoted at 0.01 (true value ~0.05) from the fitted smile and saw a
+    huge return; v2 values every leg at its own market mid, so it predicts -fees/CaR."""
     board = S.chain(half_spread="0.02", tick="0.01")
     bad = []
     for q in board.option_quotes:
         if q.contract.right is Right.CALL and q.contract.strike == D("115"):
-            q = q.model_copy(update={"bid": D("0.01"), "ask": D("0.01")})  # true value ~0.05
+            q = q.model_copy(update={"bid": D("0.01"), "ask": D("0.01")})
         bad.append(q)
     board = board.model_copy(update={"option_quotes": tuple(bad)})
-    recs, log = run(board)
-    flagged = {h for h, _ in log.bug_signals}
-    assert flagged  # the lone long 115C, bought at 0.01, predicts far above +5%
-    assert all(mean > MKT_1.bug_signal_return for _, mean in log.bug_signals)
-    assert not any(r.candidate.content_hash() in flagged for r in recs)  # none selected
-    assert all(r.expected_return_pct <= MKT_1.bug_signal_return for r in recs)
+    cands, _ = generate(board)
+    score = score_board(board, cands)
+    assert score.bug_signals == ()
+    for s in score.scored:
+        if s.candidate.structure_type is StructureType.LONG_CALL and (
+            s.candidate.legs[0].contract.strike == D("115")
+        ):
+            st = s.candidate.structure
+            assert st is not None
+            fees = float(st.entry_fees)
+            carry = 0.01 * 100 * (1 / S.DF - 1)
+            assert s.mean == pytest.approx((carry - fees) / float(st.capital_at_risk), abs=1e-9)
+
+
+def test_bug_signal_path_logs_and_excludes() -> None:
+    """With a threshold below every prediction, everything is a bug signal: all logged,
+    none selected (in v2 only a crossed or stale quote can trigger it for real)."""
+    recs, log = run(
+        S.chain(half_spread="0.02", tick="0.01"), cfg=Mkt1Config(bug_signal_return=D(-5))
+    )
+    assert recs == [] and log.bug_signals
+    assert all(mean > D(-5) for _, mean in log.bug_signals)
 
 
 def test_unfittable_expiration_is_rejected_and_logged() -> None:
@@ -266,3 +284,56 @@ def test_run_log_records_risk_neutral_quantiles_of_s_over_f() -> None:
     sd = S.VOL * math.sqrt(S.YEARS)
     assert lo == pytest.approx(lognormal_median * math.exp(-1.6449 * sd), abs=0.003)
     assert hi == pytest.approx(lognormal_median * math.exp(1.6449 * sd), abs=0.003)
+
+
+# ------------------------------------------------------------------ MKT-1 v2 (DR-0037)
+
+
+def test_v2_mean_is_mid_anchored_for_every_candidate() -> None:
+    from remy_finance.baselines.mkt1 import board_mids
+
+    board = S.chain(half_spread="0.02", tick="0.01")
+    cands, _ = generate(board)
+    score = score_board(board, cands)
+    mids = board_mids(board)
+    for s in score.scored[:500]:
+        st = s.candidate.structure
+        assert st is not None
+        m = score.model_for(s.candidate)
+        payoff = sum(
+            int(lg.side)
+            * lg.ratio
+            * lg.contract.multiplier
+            * mids[(m.symbol, m.expiration, lg.contract.right, lg.contract.strike)]
+            / m.df
+            for lg in st.legs
+        )
+        expected = (payoff - float(st.net_premium + st.entry_fees)) / float(st.capital_at_risk)
+        assert s.mean == pytest.approx(expected, abs=1e-12)
+        carry = abs(payoff) * (1 - m.df) / float(st.capital_at_risk)
+        assert s.mean <= carry + 1e-12  # crossing a spread can't be positive beyond carry
+
+
+def test_discount_factor_from_rates_and_no_rate_rejection() -> None:
+    from remy_finance.baselines.mkt1 import discount_factor_from_rates
+
+    board = S.chain()
+    assert discount_factor_from_rates(board, S.YEARS) == pytest.approx(S.DF, rel=1e-12)
+    bare = board.model_copy(update={"rates": ()})
+    assert discount_factor_from_rates(bare, S.YEARS) is None
+    model, fit = fit_expiration(bare, "XYZ", S.EXPIRY)
+    assert model is None and fit.reason == "NO_RATE"
+    model, fit = fit_expiration(board, "XYZ", S.EXPIRY)
+    assert model is not None and float(fit.forward) == pytest.approx(S.FORWARD, rel=1e-6)
+
+
+def test_v2_distribution_is_shifted_to_the_mean_and_stays_in_bounds() -> None:
+    board = S.chain(half_spread="0.02", tick="0.01")
+    cands, _ = generate(board)
+    score = score_board(board, cands)
+    for s in score.scored[:300]:
+        f = score.forecast(s)
+        values = [v for _, v in f.quantiles]
+        assert values == sorted(values)
+        assert float(values[0]) >= -1.000001  # never worse than losing all capital at risk
+        assert sum(f.bin_probabilities) == 1

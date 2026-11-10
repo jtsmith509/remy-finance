@@ -44,7 +44,7 @@ from remy_finance.registry import ADJ_0, Recommendation
 
 class Rand1Config(Record):
     version: str = "RAND-1"
-    engine_version: str = "1"
+    engine_version: str = "2"  # forecasts from MKT-1 v2 (DR-0037)
     selection: SelectionRule = SELECT_1
     forecast_model: Mkt1Config = Field(default=MKT_1)
 

@@ -120,3 +120,38 @@ uv run remy report cumulative --mode replay --out data/reports/replay-2026-08-cu
 ```
 
 Send `data/reports/power-inputs-2026-08.md`, `data/reports/replay-2026-08-cumulative.md` and the last 20 lines of the replay log. The power-estimate update is written from them, as a dated addendum.
+
+## Re-running the replay month (DR-0037)
+The first August run used MOVEGEN-1 and MKT-1 v1. To re-run it with the live configuration, run these from the repository folder:
+
+```bash
+git pull
+```
+
+Archive the first run. Nothing is deleted, and stored boards stay where they are:
+
+```bash
+uv run remy replay archive --label 2026-08-movegen1-mkt1v1
+```
+
+```bash
+uv run remy replay run --start 2026-08-03 --end 2026-08-31 2>&1 | tee data/logs/replay-2026-08-v2.log
+```
+
+It reuses every stored board through 16 October, so most of the time goes on recommendations (about 30 s per decision board) and management. The log shows a timing line per decision board. Then:
+
+```bash
+uv run remy registry verify --mode replay
+```
+
+```bash
+uv run remy report power-inputs --mode replay --out data/reports/power-inputs-2026-08-v2.md
+```
+
+```bash
+uv run remy report cumulative --mode replay --out data/reports/replay-2026-08-v2-cumulative.md
+```
+
+```bash
+uv run remy replay diagnose --date 2026-08-03 --session open
+```

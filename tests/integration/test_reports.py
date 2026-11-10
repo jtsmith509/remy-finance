@@ -107,7 +107,7 @@ def test_cumulative_report(built: Path) -> None:
     assert "# Cumulative report: REPLAY" in text
     assert "descriptive only; not a test" in text
     assert f"EVAL-1 at commit `{EVAL[:12]}`" in text
-    assert "MKT-1 v1" in text and "RAND-1 v1" in text
+    assert "MKT-1 v2" in text and "RAND-1 v2" in text
     assert "INSUFFICIENT_SIZE" in text
     assert "## By structure type" in text
     for o in outs:
@@ -134,9 +134,9 @@ def test_trades_and_daily_reports(built: Path) -> None:
     assert trades.count("\n| 2026-11-06") == n
     assert "corrected x1" in trades
     assert "# Daily report 2026-11-06: REPLAY" in decided
-    assert "| MKT-1 v1 | 4 |" in decided  # four recommendations decided that day
+    assert "| MKT-1 v2 | 4 |" in decided  # four recommendations decided that day
     for engine, n_settled in settled.items():  # settled and closed on expiry day
-        row = next(ln for ln in expiry.splitlines() if ln.startswith(f"| {engine} v1 |"))
+        row = next(ln for ln in expiry.splitlines() if ln.startswith(f"| {engine} v2 |"))
         cells = [c.strip() for c in row.strip("|").split("|")]
         assert cells[8] == cells[9] == str(n_settled) and n_settled > 0
 
@@ -166,6 +166,6 @@ def test_drawdown_and_quantiles_stay_within_the_data(built: Path) -> None:
         assert _drawdown([o for o in outs if o.rec.engine == engine]) == max(-day_pnl, 0)
     worst = min(o.realized_return for o in outs if o.realized_return is not None)
     for line in text.splitlines():
-        if line.startswith("| MKT-1 v1 | 4 | ") and " / " in line:
+        if line.startswith("| MKT-1 v2 | 4 | ") and " / " in line:
             low = float(line.split("|")[7].split("/")[0].strip().rstrip("%")) / 100
             assert low >= float(worst) - 1e-9

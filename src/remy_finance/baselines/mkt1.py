@@ -1,24 +1,28 @@
-"""Market-implied baseline MKT-1 (handoff R1.4, DR-0030).
+"""Market-implied baseline MKT-1 (handoff R1.4; DR-0030, amended by DR-0037 as v2).
 
 For each underlying and expiration on the decision board:
 
-1. Forward F and discount factor DF from put-call parity on near-the-money pairs:
-   ``C_mid - P_mid = DF (F - K)``, a straight-line fit over up to 8 strikes nearest spot.
+1. Discount factor DF = exp(-r T) from the board's point-in-time risk-free rates (D11),
+   and the forward from put-call parity on near-the-money pairs:
+   ``F = median(K + (C_mid - P_mid) / DF)`` (no dividend forecasts needed).
 2. Implied vols from out-of-the-money mids (puts below F, calls at or above), Black-76 on
    the forward. The American early-exercise premium is ignored (flagged on every run).
 3. A raw-SVI smile in log-moneyness, fitted to total variance.
 4. A discrete Breeden-Litzenberger terminal distribution; expirations whose fit fails the
    no-arbitrage checks are rejected and flagged.
-5. Each candidate's expected net return on capital at risk:
-   ``(E[payoff] - executable entry premium - fees) / capital at risk``, undiscounted, at
-   expiration (HOLD-1), using the spread-crossing prices movegen priced it at.
+5. Each candidate's predicted mean net return on capital at risk is **anchored to market
+   mids**: every leg's expected terminal payoff is its quoted mid carried to expiration
+   (mid / DF), so the mean is ``(carry - half-spreads - fees) / capital at risk`` by
+   construction (the handoff's sanity property). The fitted density gives the shape of
+   the predicted distribution (quantiles, tails, bins), shifted to that mean.
 6. Rank by that mean (ADJ-0: no adjustment) and select under SELECT-1 (K = 5, one per
    underlying per day).
 
-Sanity property (the baseline's purpose): predicted returns cluster near
-``-(half-spreads + fees) / capital at risk``. A predicted mean above
-``bug_signal_return`` is treated as a bug signal: logged in the run record and not
-selected.
+Why v2 (DR-0037): in the August 2026 replay, v1 took the mean from the fitted density, so
+ranking by it selected the candidates where the fit overvalued the market most (picks
+predicted about +4%, realized about -73%), and a tight parity-implied DF bound rejected
+most expirations. A predicted mean above ``bug_signal_return`` now means a crossed or
+stale quote: logged in the run record and not selected.
 
 The volatility-risk-premium adjustment is OFF in R1 (``vrp_adjustment``): a hook for R2.
 """
@@ -74,11 +78,11 @@ RN_QUANTILE_PROBS = (Decimal("0.001"), *QUANTILE_PROBS, Decimal("0.999"))
 
 class Mkt1Config(Record):
     version: str = "MKT-1"
-    engine_version: str = "1"
+    engine_version: str = "2"  # DR-0037: mid-anchored mean, discount factor from rates
     parity_pairs: int = Field(default=8, ge=3)
     min_parity_pairs: int = Field(default=3, ge=2)
-    df_min: PosDec = Decimal("0.9")
-    df_max: PosDec = Decimal("1.0001")
+    discount: str = "RATES"  # DF = exp(-r T) from the board's point-in-time rates (DR-0037)
+    mean_method: str = "MID-ANCHORED"  # each leg's expected payoff = mid / DF (DR-0037)
     max_forward_gap: PosDec = Decimal("0.1")  # |F / spot - 1|
     min_iv_points: int = Field(default=5, ge=5)
     min_iv_mid: PosDec = Decimal("0.05")  # mids below this are tick noise: not fitted
@@ -133,6 +137,27 @@ def _years(as_of: datetime, expiration: date) -> float:
     return (close - as_of).total_seconds() / YEAR_SECONDS
 
 
+TENOR_YEARS = {"ON": 1 / 365, "1M": 1 / 12, "3M": 0.25, "6M": 0.5, "1Y": 1.0}
+
+
+def discount_factor_from_rates(board: MarketState, years: float) -> float | None:
+    """exp(-r T), with r the latest board rate per tenor, interpolated linearly in
+    maturity (flat beyond the ends). None if the board has no usable rate."""
+    latest: dict[float, tuple[date, float]] = {}
+    for r in board.rates:
+        t = TENOR_YEARS.get(r.tenor)
+        if t is None:
+            continue
+        if t not in latest or r.observation_date > latest[t][0]:
+            latest[t] = (r.observation_date, float(r.rate))
+    if not latest:
+        return None
+    ts = sorted(latest)
+    rs = [latest[t][1] for t in ts]
+    rate = float(np.interp(years, ts, rs))
+    return math.exp(-rate * years)
+
+
 def fit_expiration(
     board: MarketState, symbol: str, expiration: date, cfg: Mkt1Config = MKT_1
 ) -> tuple[ExpiryModel | None, ExpirationFit]:
@@ -165,13 +190,12 @@ def fit_expiration(
     both = sorted(set(calls) & set(puts), key=lambda k: (abs(k - spot), k))[: cfg.parity_pairs]
     if len(both) < cfg.min_parity_pairs:
         return reject("TOO_FEW_PARITY_PAIRS", parity_pairs=len(both))
-    ks = np.array(both)
-    diffs = np.array([_mid(calls[k]) - _mid(puts[k]) for k in both])
-    slope, intercept = np.polyfit(ks, diffs, 1)
-    df = -float(slope)
-    if not float(cfg.df_min) <= df <= float(cfg.df_max):
-        return reject(f"DISCOUNT_FACTOR_OUT_OF_RANGE:{df:.6f}", parity_pairs=len(both))
-    forward = float(intercept) / df
+    rate_df = discount_factor_from_rates(board, years)
+    if rate_df is None:
+        return reject("NO_RATE", parity_pairs=len(both))
+    df = rate_df
+    # C - P = DF (F - K)  =>  F = K + (C - P) / DF; the median resists a stray quote
+    forward = float(np.median([k + (_mid(calls[k]) - _mid(puts[k])) / df for k in both]))
     if abs(forward / spot - 1) > float(cfg.max_forward_gap):
         return reject(f"FORWARD_FAR_FROM_SPOT:{forward:.4f}", parity_pairs=len(both))
 
@@ -239,7 +263,8 @@ VanillaCache = dict[tuple[str, date, Right, Decimal], float]
 
 
 def expected_return(model: ExpiryModel, c: Candidate, cache: VanillaCache | None = None) -> float:
-    """MKT-1 predicted mean net return on capital at risk (per unit; quantity cancels)."""
+    """The fitted density's expected net return on capital at risk (diagnostics only since
+    MKT-1 v2; the recommended mean is ``anchored_return``)."""
     s = c.structure
     assert s is not None
     cache = {} if cache is None else cache
@@ -250,6 +275,35 @@ def expected_return(model: ExpiryModel, c: Candidate, cache: VanillaCache | None
         if v is None:
             v = cache[key] = model.vanilla(leg.contract.right, float(leg.contract.strike))
         payoff += int(leg.side) * leg.ratio * leg.contract.multiplier * v
+    cost = float(s.net_premium + s.entry_fees + s.exit_fees)
+    return (payoff - cost) / float(s.capital_at_risk)
+
+
+MidKey = tuple[str, date, Right, Decimal]
+
+
+def board_mids(board: MarketState) -> dict[MidKey, float]:
+    """Mid of every two-sided standard option quote on the board."""
+    out: dict[MidKey, float] = {}
+    for q in board.option_quotes:
+        c = q.contract
+        if c.standard_deliverable and q.is_two_sided:
+            out[(c.underlying, c.expiration, c.right, c.strike)] = _mid(q)
+    return out
+
+
+def anchored_return(model: ExpiryModel, c: Candidate, mids: dict[MidKey, float]) -> float | None:
+    """MKT-1 v2 predicted mean (DR-0037): each leg's expected terminal payoff is its quoted
+    mid carried to expiration (mid / DF), so the mean is exactly
+    ``(carry - half-spreads - fees) / capital at risk``. None if a leg has no mid."""
+    s = c.structure
+    assert s is not None
+    payoff = 0.0
+    for leg in c.legs:
+        mid = mids.get((model.symbol, model.expiration, leg.contract.right, leg.contract.strike))
+        if mid is None:
+            return None
+        payoff += int(leg.side) * leg.ratio * leg.contract.multiplier * mid / model.df
     cost = float(s.net_premium + s.entry_fees + s.exit_fees)
     return (payoff - cost) / float(s.capital_at_risk)
 
@@ -298,14 +352,23 @@ def bin_probabilities(
 
 
 def return_distribution(
-    model: ExpiryModel, c: Candidate, places: int, bins: ReturnBins = EVAL_1_BINS
+    model: ExpiryModel,
+    c: Candidate,
+    places: int,
+    bins: ReturnBins = EVAL_1_BINS,
+    mean: float | None = None,
 ) -> tuple[list[tuple[Decimal, Decimal]], list[tuple[str, Decimal]], list[Decimal]]:
-    """Quantiles, tail measures and bin probabilities of the predicted net return."""
+    """Quantiles, tail measures and bin probabilities of the predicted net return.
+
+    With ``mean`` (MKT-1 v2), the density's return distribution keeps its shape but is
+    shifted so its mean equals ``mean``, then clipped to the attainable range (DR-0037)."""
     s = c.structure
     assert s is not None
     cost = float(s.net_premium + s.entry_fees + s.exit_fees)
     r = (model.payoff_on_support(c) - cost) / float(s.capital_at_risk)
     probs = model.dist.probs
+    if mean is not None:
+        r = np.clip(r + (mean - float(np.dot(r, probs))), r.min(), r.max())
     quantiles = _quantiles(r, probs, QUANTILE_PROBS, places)
     order = np.argsort(r, kind="stable")
     r_sorted, p_sorted = r[order], probs[order]
@@ -337,7 +400,10 @@ class Scored:
 
 
 VrpHook = Callable[[ExpiryModel], ExpiryModel]
-MKT1_METHOD = "MKT-1: SVI smile, Breeden-Litzenberger, undiscounted at expiration"
+MKT1_METHOD = (
+    "MKT-1 v2: mean from market mids carried at the rate-implied DF; distribution shape from "
+    "an SVI smile (Breeden-Litzenberger), shifted to that mean; undiscounted at expiration"
+)
 
 
 @dataclass(frozen=True)
@@ -358,7 +424,7 @@ class BoardScore:
 
     def forecast(self, s: Scored) -> Forecast:
         quantiles, tails, bins = return_distribution(
-            self.model_for(s.candidate), s.candidate, self.cfg.return_places
+            self.model_for(s.candidate), s.candidate, self.cfg.return_places, mean=s.mean
         )
         return Forecast(
             mean=to_decimal_places(s.mean, self.cfg.return_places),
@@ -386,15 +452,17 @@ def score_board(
             model, fit = fit_expiration(board, key[0], key[1], cfg)
             models[key] = model
             fits.append(fit)
-    cache: VanillaCache = {}
+    mids = board_mids(board)
     scored: list[Scored] = []
     bug_signals: list[tuple[str, Decimal]] = []
     for i, c in enumerate(usable):
         model = models[(underlying_of(c), c.legs[0].contract.expiration)]
         if model is None:
             continue
-        mean = expected_return(model, c, cache)
-        if mean > float(cfg.bug_signal_return):
+        mean = anchored_return(model, c, mids)
+        if mean is None:
+            continue
+        if mean > float(cfg.bug_signal_return):  # now only a crossed or stale quote can do this
             bug_signals.append((c.content_hash(), to_decimal_places(mean, cfg.return_places)))
             continue
         scored.append(Scored(c, mean, i))

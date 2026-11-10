@@ -12,6 +12,7 @@ from remy_finance.core import (
     Mode,
     OptionContract,
     OptionQuote,
+    RatePoint,
     Right,
     Session,
     UnderlyingQuote,
@@ -82,4 +83,15 @@ def chain(
             ),
         ),
         option_quotes=tuple(quotes),
+        rates=(
+            RatePoint(
+                symbol="TREASURY_M3",
+                tenor="3M",
+                observation_date=date(2026, 11, 5),
+                rate=Decimal(repr(RATE)),
+                event_time=AS_OF - timedelta(days=1),
+                public_time=AS_OF - timedelta(hours=5),
+                source="synthetic",
+            ),
+        ),
     )

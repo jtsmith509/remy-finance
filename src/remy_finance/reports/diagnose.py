@@ -8,6 +8,7 @@ the SVI wings are extrapolated, which is where a fit artifact would show up firs
 
 from __future__ import annotations
 
+import re
 import statistics
 from collections import Counter
 
@@ -30,7 +31,7 @@ def diagnose_board(board: MarketState, top: int = 15) -> str:
         f"{board.as_of.isoformat()} {board.session.value}: {len(cands)} candidates, "
         f"{len(score.scored)} scored; fits {ok} ok / {len(score.fits) - ok} rejected",
     ]
-    rejected = Counter(f.reason.split(":")[0] for f in score.fits if not f.ok)
+    rejected = Counter(re.sub(r"-?\d+(\.\d+)?", "#", f.reason) for f in score.fits if not f.ok)
     out += [f"  rejected {reason}: {n}" for reason, n in rejected.most_common()]
 
     groups: dict[tuple[str, bool], list[float]] = {}

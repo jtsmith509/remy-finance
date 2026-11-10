@@ -132,13 +132,13 @@ def test_measured_power_inputs(data: Path) -> None:
     with Registry.open(registry_path(data, Mode.REPLAY)) as reg:
         outs = outcomes(reg)
     mkt = [o for o in outs if o.rec.engine == "MKT-1"]
-    m = measure("MKT-1 v1", mkt, trading_days=3)
+    m = measure("MKT-1 v2", mkt, trading_days=3)
     assert m.recs_per_day == pytest.approx(3.0)
     assert m.fill_rate is not None and 0 < m.fill_rate <= 1
     assert m.sigma is not None and m.sigma > 0
     text = measured_report(outs, 3, "REPLAY")
     assert "Planning inputs only; not evidence of edge" in text
-    assert "| MKT-1 v1 |" in text and "| prior (power-estimate.md) |" in text
+    assert "| MKT-1 v2 |" in text and "| prior (power-estimate.md) |" in text
 
 
 def test_design_effect() -> None:
@@ -166,3 +166,29 @@ def test_replay_bench_times_a_stored_board_and_writes_nothing(
     assert not (data / "registry").exists() and not (data / "runs").exists()
     r = CliRunner().invoke(cli.app, ["replay", "bench", "--date", "2026-08-03"])
     assert r.exit_code == 1 and "no stored REPLAY decision board" in r.output
+
+
+def test_replay_archive_moves_registry_and_run_logs_only(
+    data: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from typer.testing import CliRunner
+
+    import remy_finance.cli as cli
+
+    monkeypatch.setenv("REMY_DATA_DIR", str(data))
+    driver(data).run(START, START)
+    reg = registry_path(data, Mode.REPLAY)
+    assert reg.exists() and (data / "runs" / "replay").exists()
+    snaps = sorted((data / "snapshots").rglob("manifest.json"))
+    r = CliRunner().invoke(cli.app, ["replay", "archive", "--label", "first-run"])
+    assert r.exit_code == 0, r.output
+    dest = data / "archive" / "first-run"
+    assert (dest / "replay.sqlite").exists() and (dest / "replay").exists()
+    assert not reg.exists() and not (data / "runs" / "replay").exists()
+    assert sorted((data / "snapshots").rglob("manifest.json")) == snaps  # boards kept
+    with Registry.open(dest / "replay.sqlite") as old:
+        assert old.verify().ok  # the archived registry is intact
+    r = CliRunner().invoke(cli.app, ["replay", "archive", "--label", "first-run"])
+    assert r.exit_code == 1  # never overwrites an archive
+    again = driver(data).run(START, START)  # a fresh replay reuses the stored boards
+    assert again.boards_built == 0 and again.boards_reused > 0
