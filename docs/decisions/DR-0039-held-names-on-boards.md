@@ -1,6 +1,6 @@
 # DR-0039: Held names on captured boards
 
-- **Status:** proposed (Josh chose "Add held names to boards" on 2026-11-11 when deciding the Codex fixes; awaiting confirmation of this record)
+- **Status:** accepted (Josh, 2026-11-11)
 - **Date:** 2026-11-11
 - **Source:** Codex R1.6 F02 (`docs/review/R1.6-R1.8-findings.md`). Amends [DR-0033](DR-0033-scheduler.md)'s board capture; leaves UNIV-1 ([DR-0004](DR-0004-universe-rule.md), [DR-0023](DR-0023-univ-1-details.md)) unchanged.
 - **Stage:** R1, before the 5-day live run
