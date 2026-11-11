@@ -48,13 +48,25 @@ def _uniform(seed: str) -> float:
 
 
 def pit(levels: Sequence[float], values: Sequence[float], r: float, seed: str) -> float:
+    """The forecast CDF at ``r``, interpolated linearly between the recorded quantiles
+    (EVAL-1 §2.1), randomised uniformly only within a jump the record supports:
+
+    - a point mass: two or more recorded quantiles equal ``r``. The CDF jumps from the first
+      to the last of their levels;
+    - ``r`` at or beyond the outermost quantile: the unrecorded tail mass, so [0, first
+      level] at the bottom (e.g. a realized max loss equal to the lowest quantile) and
+      [last level, 1] at the top.
+
+    An interior quantile equal to ``r`` alone is an interpolation knot, not a jump: its
+    level is the PIT (Codex R1.6 F06)."""
     below = [(t, q) for t, q in zip(levels, values, strict=True) if q < r]
     equal = [t for t, q in zip(levels, values, strict=True) if q == r]
     above = [(t, q) for t, q in zip(levels, values, strict=True) if q > r]
-    lo_t = below[-1][0] if below else 0.0
-    hi_t = above[0][0] if above else 1.0
     if equal or not below or not above:
-        # a jump in the CDF: a point mass at r, or r beyond the outermost quantiles
+        lo_t = (equal[0] if equal else below[-1][0]) if below else 0.0
+        hi_t = (equal[-1] if equal else above[0][0]) if above else 1.0
+        if lo_t == hi_t:
+            return lo_t
         return lo_t + (hi_t - lo_t) * _uniform(seed)
     (t0, q0), (t1, q1) = below[-1], above[0]
     return t0 + (t1 - t0) * (r - q0) / (q1 - q0)

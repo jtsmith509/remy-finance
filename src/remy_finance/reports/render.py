@@ -5,7 +5,12 @@ Rules (handoff R1.7; EVAL-1 §5 and §7):
 - Groups are engine *and* version: records of different versions are never pooled.
 - Interim reports are descriptive only. They carry no p-values for P1 or P2, and the
   header says so. Confirmatory analyses run on EVAL-1's fixed schedule, not here.
-- The header names the EVAL-1 commit the scoring follows and the registry chain heads.
+- The header names the EVAL-1 commit the scoring follows, the registry chain heads and
+  every engine/version/code-commit combination in the records (EVAL-1 §7).
+- Returns, forecast scores and ranks are computed on the EVAL-1 cohort: closed filled
+  trades decided at least 61 days before the cutoff (§1.4). All-record results appear only
+  in a separately labelled operational view (Codex R1.6 F04).
+- Mean CRPS carries the §4 cluster-bootstrap interval (descriptive; Codex R1.6 F08).
 """
 
 from __future__ import annotations
@@ -21,7 +26,8 @@ from remy_finance.baselines.common import BaselineRun
 from remy_finance.core import Mode
 from remy_finance.data.timeutil import et_date
 from remy_finance.registry import EventKind, Registry
-from remy_finance.reports.outcomes import Status, TradeOutcome, outcomes
+from remy_finance.reports.bootstrap import cluster_bootstrap
+from remy_finance.reports.outcomes import EVAL1_CENSOR_DAYS, Status, TradeOutcome, outcomes
 from remy_finance.reports.scores import COVERAGE_LEVELS, Scores, score
 from remy_finance.snapshots.store import GapRecord
 
@@ -34,9 +40,13 @@ class Header:
     generated_at: datetime
     eval_commit: str
     heads: dict[str, tuple[int, str]]
+    engines: tuple[tuple[str, str, str, int], ...] = ()  # (engine, version, commit, n)
 
     def lines(self, title: str) -> list[str]:
         rows = "; ".join(f"{t} {n} rows, head {h[:12]}" for t, (n, h) in self.heads.items())
+        engines = (
+            "; ".join(f"{e} v{v} at `{c}` ({n} records)" for e, v, c, n in self.engines) or "none"
+        )
         return [
             f"# {title}: {self.mode.value}",
             "",
@@ -44,6 +54,7 @@ class Header:
             f"- **Generated:** {self.generated_at.isoformat()}",
             f"- **Scoring protocol:** EVAL-1 at commit `{self.eval_commit[:12]}`",
             f"- **Registry:** {rows}",
+            f"- **Engines (code commits):** {engines}",
             "- **Interim report: descriptive only; not a test.** No p-values for P1 or P2; "
             "confirmatory analyses run only on EVAL-1's schedule.",
             "",
@@ -52,7 +63,11 @@ class Header:
 
 def header(registry: Registry, now: datetime, eval_commit: str) -> Header:
     heads = {t: registry.head(t) for t in ("recommendations", "journal")}
-    return Header(registry.mode, now, eval_commit, heads)
+    combos = Counter(
+        (r.engine, r.engine_version, r.code_commit) for r in registry.recommendations()
+    )
+    engines = tuple((e, v, c, n) for (e, v, c), n in sorted(combos.items()))
+    return Header(registry.mode, now, eval_commit, heads, engines)
 
 
 def _pct(x: float | Decimal | None, places: int = 1) -> str:
@@ -232,8 +247,12 @@ def _avg_car(filled: Sequence[TradeOutcome], now: datetime) -> Decimal | None:
     return (total / days).quantize(Decimal("0.01"))
 
 
-def group_stats(group: str, items: Sequence[TradeOutcome], now: datetime) -> GroupStats:
-    closed = [o for o in items if o.closed_filled]
+def group_stats(
+    group: str, items: Sequence[TradeOutcome], now: datetime, cutoff: date | None = None
+) -> GroupStats:
+    """With ``cutoff``, ``closed`` (and the scores, P&L and drawdown over it) is the EVAL-1
+    cohort: decided at least 61 days before ``cutoff``. Without it, all closed trades."""
+    closed = [o for o in items if o.closed_filled and (cutoff is None or o.eval1_eligible(cutoff))]
     filled = [o for o in items if o.filled]
     return GroupStats(
         group=group,
@@ -279,30 +298,7 @@ def _spearman(xs: Sequence[float], ys: Sequence[float]) -> float | None:
     return statistics.correlation(rx, ry)
 
 
-def cumulative_report(registry: Registry, now: datetime, eval_commit: str) -> str:
-    lines = header(registry, now, eval_commit).lines("Cumulative report")
-    groups: dict[str, list[TradeOutcome]] = defaultdict(list)
-    for o in outcomes(registry):
-        groups[o.engine_group].append(o)
-    stats = [group_stats(g, groups[g], now) for g in sorted(groups)]
-    cutoff = et_date(now)
-
-    lines += ["## Activity and fills", ""]
-    lines += _table(
-        ("engine", "recommended", "filled", "fill rate", "unfilled (reason: n)", "pending",
-         "open", "closed", f"EVAL-1 eligible at {cutoff}"),
-        (
-            (
-                s.group, s.n, s.filled, _pct(s.fill_rate),
-                ", ".join(f"{k}: {v}" for k, v in sorted(s.unfilled_reasons.items())) or "-",
-                s.pending, s.open, len(s.closed),
-                sum(1 for o in groups[s.group] if o.closed_filled and o.eval1_eligible(cutoff)),
-            )
-            for s in stats
-        ),
-    )  # fmt: skip
-
-    lines += ["", "## Realized versus predicted net return on capital at risk (closed trades)", ""]
+def _realized_section(stats: Sequence[GroupStats]) -> list[str]:
     rows: list[tuple[object, ...]] = []
     for s in stats:
         rr = [float(o.realized_return) for o in s.closed if o.realized_return is not None]
@@ -319,13 +315,101 @@ def cumulative_report(registry: Registry, now: datetime, eval_commit: str) -> st
                 f"{_pct(qs[0])} / {_pct(qs[4])} / {_pct(qs[14])} / {_pct(qs[18])}" if qs else "-",
             )
         )
-    lines += _table(
+    return _table(
         ("engine", "closed", "mean predicted", "mean realized", "median realized",
          "mean realized - predicted", "realized 5% / 25% / 75% / 95%"),
         rows,
     )  # fmt: skip
 
-    lines += ["", "## P&L, drawdown and events", ""]
+
+def _forecast_section(stats: Sequence[GroupStats]) -> list[str]:
+    cov_head = [f"below {_pct(lv, 0)} (exp {_pct(lv, 0)})" for lv in COVERAGE_LEVELS[:2]] + [
+        f"above {_pct(lv, 0)} (exp {_pct(1 - lv, 0)})" for lv in COVERAGE_LEVELS[2:]
+    ]
+    rows: list[tuple[object, ...]] = []
+    for s in stats:
+        sc = s.scores
+        logs = [x.log_score for x in sc if x.log_score is not None]
+        cov = [
+            _pct(sum(x.exceed[lv] for x in sc if lv in x.exceed) / len(sc)) if sc else "-"
+            for lv in COVERAGE_LEVELS
+        ]
+        ci = (
+            cluster_bootstrap([x.crps for x in sc], [o.rec.expiration for o in s.closed]).text()
+            if sc
+            else "-"
+        )
+        rows.append(
+            (
+                s.group,
+                len(sc),
+                f"{statistics.fmean(x.crps for x in sc):.4f}" if sc else "-",
+                ci,
+                f"{statistics.fmean(logs):.3f}" if logs else "-",
+                *cov,
+            )
+        )
+    lines = _table(
+        ("engine", "n", "mean CRPS", "CRPS 95% cluster-bootstrap interval", "mean log score",
+         *cov_head),
+        rows,
+    )  # fmt: skip
+    lines += [
+        "",
+        "Interval: EVAL-1 §4 cluster bootstrap (clusters: ISO week of expiration; 10,000 "
+        'resamples; seed from sha256("EVAL-1"); percentile). Descriptive, not a test.',
+        "",
+        "**PIT histogram** (10 bins; a calibrated forecast is flat):",
+        "",
+    ]
+    lines += _table(
+        ("engine", *(f"{i / 10:.1f}-{(i + 1) / 10:.1f}" for i in range(10))),
+        (
+            (
+                s.group,
+                *(sum(1 for x in s.scores if min(int(x.pit * 10), 9) == i) for i in range(10)),
+            )
+            for s in stats
+        ),
+    )
+    return lines
+
+
+def cumulative_report(registry: Registry, now: datetime, eval_commit: str) -> str:
+    lines = header(registry, now, eval_commit).lines("Cumulative report")
+    groups: dict[str, list[TradeOutcome]] = defaultdict(list)
+    for o in outcomes(registry):
+        groups[o.engine_group].append(o)
+    cutoff = et_date(now)
+    stats = [group_stats(g, groups[g], now) for g in sorted(groups)]  # operational: all
+    cohort = [group_stats(g, groups[g], now, cutoff) for g in sorted(groups)]  # EVAL-1
+    first = cutoff - timedelta(days=EVAL1_CENSOR_DAYS)
+
+    lines += ["## Activity and fills", ""]
+    lines += _table(
+        ("engine", "recommended", "filled", "fill rate", "unfilled (reason: n)", "pending",
+         "open", "closed", f"EVAL-1 eligible at {cutoff}"),
+        (
+            (
+                s.group, s.n, s.filled, _pct(s.fill_rate),
+                ", ".join(f"{k}: {v}" for k, v in sorted(s.unfilled_reasons.items())) or "-",
+                s.pending, s.open, len(s.closed), len(c.closed),
+            )
+            for s, c in zip(stats, cohort, strict=True)
+        ),
+    )  # fmt: skip
+    lines += [
+        "",
+        f"**EVAL-1 cohort** (§1.4): closed filled trades decided on or before {first} "
+        f"(61 days before {cutoff}). Returns, forecast scores, structure returns and ranks "
+        "below use only this cohort; the operational view at the end covers every closed "
+        "trade and is not an EVAL-1 result.",
+    ]
+
+    lines += ["", "## Realized versus predicted net return on capital at risk (EVAL-1 cohort)", ""]
+    lines += _realized_section(cohort)
+
+    lines += ["", "## P&L, drawdown and events (operational: all closed trades)", ""]
     lines += _table(
         ("engine", "P&L (corrected)", "P&L (original)", "max drawdown",
          "drawdown / avg CaR outstanding", "assignments", "forced exits", "exit retries",
@@ -345,41 +429,11 @@ def cumulative_report(registry: Registry, now: datetime, eval_commit: str) -> st
         ),
     )  # fmt: skip
 
-    lines += ["", "## Forecast scores (EVAL-1 §2.1; descriptive)", ""]
-    cov_head = [f"below {_pct(lv, 0)} (exp {_pct(lv, 0)})" for lv in COVERAGE_LEVELS[:2]] + [
-        f"above {_pct(lv, 0)} (exp {_pct(1 - lv, 0)})" for lv in COVERAGE_LEVELS[2:]
-    ]
-    rows = []
-    for s in stats:
-        sc = s.scores
-        logs = [x.log_score for x in sc if x.log_score is not None]
-        cov = [
-            _pct(sum(x.exceed[lv] for x in sc if lv in x.exceed) / len(sc)) if sc else "-"
-            for lv in COVERAGE_LEVELS
-        ]
-        rows.append(
-            (
-                s.group,
-                len(sc),
-                f"{statistics.fmean(x.crps for x in sc):.4f}" if sc else "-",
-                f"{statistics.fmean(logs):.3f}" if logs else "-",
-                *cov,
-            )
-        )
-    lines += _table(("engine", "n", "mean CRPS", "mean log score", *cov_head), rows)
-    lines += ["", "**PIT histogram** (10 bins; a calibrated forecast is flat):", ""]
-    lines += _table(
-        ("engine", *(f"{i / 10:.1f}-{(i + 1) / 10:.1f}" for i in range(10))),
-        (
-            (
-                s.group,
-                *(sum(1 for x in s.scores if min(int(x.pit * 10), 9) == i) for i in range(10)),
-            )
-            for s in stats
-        ),
-    )
+    lines += ["", "## Forecast scores (EVAL-1 §2.1; EVAL-1 cohort; descriptive)", ""]
+    lines += _forecast_section(cohort)
 
     lines += ["", "## By structure type", ""]
+    eligible = {o.trade_id for c in cohort for o in c.closed}
     by_struct: dict[tuple[str, str], list[TradeOutcome]] = defaultdict(list)
     for s in stats:
         for o in groups[s.group]:
@@ -387,7 +441,7 @@ def cumulative_report(registry: Registry, now: datetime, eval_commit: str) -> st
             by_struct[(s.group, stype.value if stype else "-")].append(o)
     struct_rows: list[tuple[object, ...]] = []
     for (g, st_name), items in sorted(by_struct.items()):
-        closed = [o for o in items if o.closed_filled and o.realized_return is not None]
+        closed = [o for o in items if o.trade_id in eligible and o.realized_return is not None]
         rr = [float(o.realized_return) for o in closed]  # type: ignore[arg-type]
         resolved = sum(1 for o in items if o.filled or o.status is Status.UNFILLED)
         filled = sum(1 for o in items if o.filled)
@@ -406,14 +460,14 @@ def cumulative_report(registry: Registry, now: datetime, eval_commit: str) -> st
             )
         )
     lines += _table(
-        ("engine", "structure", "recommended", "fill rate", "closed", "mean predicted",
-         "mean realized", "P&L"),
+        ("engine", "structure", "recommended", "fill rate", "closed (EVAL-1 cohort)",
+         "mean predicted", "mean realized", "P&L (cohort)"),
         struct_rows,
     )  # fmt: skip
 
-    lines += ["", "## Selection by rank (closed trades)", ""]
-    rows = []
-    for s in stats:
+    lines += ["", "## Selection by rank (EVAL-1 cohort)", ""]
+    rows: list[tuple[object, ...]] = []
+    for s in cohort:
         by_rank: dict[int, list[float]] = defaultdict(list)
         for o in s.closed:
             if o.realized_return is not None:
@@ -443,4 +497,19 @@ def cumulative_report(registry: Registry, now: datetime, eval_commit: str) -> st
         "",
         "RAND-1's rank is its draw order, not a preference (DR-0031).",
     ]
+
+    lines += [
+        "",
+        "## Operational view: all closed trades (not EVAL-1 results)",
+        "",
+        "Every closed filled trade, including those decided within 61 days of the cutoff. "
+        "Recent cohorts over-represent early closes (assignments, forced exits), so these "
+        "numbers check the machinery; they are not EVAL-1 scores.",
+        "",
+        "**Realized versus predicted** (all closed trades):",
+        "",
+    ]
+    lines += _realized_section(stats)
+    lines += ["", "**Forecast scores** (all closed trades):", ""]
+    lines += _forecast_section(stats)
     return "\n".join(lines) + "\n"

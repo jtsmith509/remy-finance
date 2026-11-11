@@ -53,13 +53,18 @@ def test_log_score_uses_the_realized_bin_with_a_floor() -> None:
 
 
 def test_pit_interpolates_and_randomizes_jumps_deterministically() -> None:
-    assert 0.1 <= pit(LEVELS, VALUES, 0.0, "t") <= 0.9  # exactly at a quantile: a jump
+    # A single quantile equal to r is an interpolation knot, not a jump (Codex R1.6 F06).
+    assert pit(LEVELS, VALUES, 0.0, "t") == pytest.approx(0.5)
+    assert {pit(LEVELS, VALUES, 0.0, s) for s in "abcdef"} == {0.5}
+    # At the lowest quantile the unrecorded tail below it is a possible jump: [0, 0.1].
+    assert 0.0 <= pit(LEVELS, VALUES, -0.5, "t") <= 0.1
     assert pit(LEVELS, VALUES, 0.25, "t") == pytest.approx(0.7)
     low = pit(LEVELS, VALUES, -9.0, "seed-a")
     assert 0 <= low <= 0.1 and low == pit(LEVELS, VALUES, -9.0, "seed-a")
     assert 0.9 <= pit(LEVELS, VALUES, 9.0, "seed-b") <= 1
     atom = pit([0.1, 0.5, 0.9], [-1.0, -1.0, 0.5], -1.0, "x")  # point mass at max loss
-    assert 0.0 <= atom <= 0.9
+    assert 0.0 <= atom <= 0.5  # the CDF jumps to 0.5 at -1, from the unrecorded tail
+    assert {pit([0.1, 0.5, 0.9], [-1.0, -1.0, 0.5], -1.0, s) for s in "abcdef"} != {atom}
 
 
 def test_score_bundle_and_coverage() -> None:
