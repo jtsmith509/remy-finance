@@ -2,7 +2,9 @@
 
 Every step is idempotent: re-running it after a crash, or twice, writes nothing new.
 
-- ``recommend``: movegen, then MKT-1 and RAND-1 on a decision board. Recommendations are
+- ``recommend``: movegen, then MKT-1 and RAND-1 on a decision board, restricted to its
+  universe members: names on the board only because a position is open in them (DR-0039)
+  are never recommended. Recommendations are
   written, then submitted, and the run log is written last. A re-run recomputes the same
   picks, because the per-day cap only counts earlier snapshots and trade IDs are
   deterministic; recorded trades are skipped.
@@ -20,9 +22,9 @@ from __future__ import annotations
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import date, datetime
 
-from remy_finance.baselines.common import BaselineRun, underlyings_picked_today
+from remy_finance.baselines.common import BaselineRun, underlying_of, underlyings_picked_today
 from remy_finance.baselines.mkt1 import BoardScore, run_mkt1, score_board
 from remy_finance.baselines.rand1 import run_rand1
 from remy_finance.core import Candidate, MarketState, Mode
@@ -30,8 +32,9 @@ from remy_finance.data.protocol import OfficialCloseSource
 from remy_finance.data.timeutil import et_date
 from remy_finance.data.view import official_close_as_of
 from remy_finance.execution.engine import PaperEngine
-from remy_finance.movegen.generator import generate
+from remy_finance.movegen.generator import generate, list_hash
 from remy_finance.registry import Recommendation, Registry
+from remy_finance.scheduler.held import held_only, held_underlyings
 from remy_finance.scheduler.runlog import RunLogStore
 
 Baseline = Callable[..., tuple[list[Recommendation], BaselineRun]]
@@ -75,9 +78,15 @@ class Pipeline:
             if candidates is None:
                 t0 = time.perf_counter()
                 candidates, summary = generate(board)
+                list_digest = summary.list_hash
+                held = held_only(board)
+                if held:  # DR-0039: held-only names are marked and managed, not recommended
+                    candidates = tuple(
+                        c for c in candidates if not c.legs or underlying_of(c) not in held
+                    )
+                    list_digest = list_hash(candidates)
                 t1 = time.perf_counter()
                 score = score_board(board, candidates)  # shared: MKT-1 and RAND-1 (DR-0031)
-                list_digest = summary.list_hash
                 self.timings.append(
                     f"{board.session.value} {day}: {len(candidates)} candidates, "
                     f"movegen {t1 - t0:.0f}s, scoring {time.perf_counter() - t1:.0f}s"
@@ -123,9 +132,19 @@ class Pipeline:
                 continue
             underlying = rec.candidate.legs[0].contract.underlying
             if underlying not in decision.underlyings:
-                continue  # not on this board (universe change): assessed at the next one
+                # Boards carry held names (DR-0039), so this is a board built without them
+                # (e.g. before DR-0039). Never silent: logged, and assessed at the next one.
+                self.timings.append(
+                    f"{decision.session.value} {today}: {rec.trade_id[:12]} not managed: "
+                    f"{underlying} is not on the board"
+                )
+                continue
             n += len(self.engine.on_snapshot(rec.trade_id, decision, execution, self.clock()))
         return n
+
+    def held(self, day: date) -> frozenset[str]:
+        """Underlyings with an open position on ``day``: added to captured boards."""
+        return held_underlyings(self.registry, self.engine, day)
 
     def settle_expired(self, closes: OfficialCloseSource, as_of: datetime) -> tuple[int, int]:
         """Returns (trades settled, trades still waiting for a public official close)."""

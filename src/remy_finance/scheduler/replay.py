@@ -27,6 +27,7 @@ from remy_finance.core import MarketState, Mode, Session, Side
 from remy_finance.data.protocol import OfficialCloseSource
 from remy_finance.data.timeutil import et_at, next_session
 from remy_finance.registry import Registry, registry_path
+from remy_finance.scheduler.held import board_symbols, held_provenance
 from remy_finance.scheduler.pipeline import Pipeline
 from remy_finance.scheduler.runlog import RunLogStore
 from remy_finance.snapshots.schedule import SnapshotKind, is_session
@@ -73,6 +74,7 @@ class ReplayDriver:
         kind: SnapshotKind,
         decision: MarketState | None,
         summary: ReplaySummary,
+        held: frozenset[str] = frozenset(),
     ) -> MarketState:
         found = store.find(Mode.REPLAY, d, session, kind)
         if found is not None:
@@ -85,7 +87,14 @@ class ReplayDriver:
                 f"{d:%Y-%m}` (or the month before) first"
             )
         t0 = time.perf_counter()
-        board = self.build(d, session, kind, list(membership.members), membership.version_label)
+        # DR-0039: the members plus every held name; held-only names are recorded on the
+        # board and never recommended.
+        symbols, held_only = board_symbols(list(membership.members), held)
+        board = self.build(d, session, kind, symbols, membership.version_label)
+        if held_only:
+            board = board.model_copy(
+                update={"provenance": (*board.provenance, *held_provenance(held_only))}
+            )
         store.write(
             board,
             kind=kind,
@@ -161,7 +170,8 @@ class ReplayDriver:
         for session in (Session.OPEN, Session.CLOSE):
             if not boards:
                 break
-            decision = self._board(store, d, session, SnapshotKind.DECISION, None, summary)
+            held = p.held(d)
+            decision = self._board(store, d, session, SnapshotKind.DECISION, None, summary, held)
             if in_range:
                 p.clock = _fixed(decision.as_of + RECEIPT_DELAY)
                 t0 = time.perf_counter()
@@ -170,7 +180,9 @@ class ReplayDriver:
                 for line in p.timings:
                     self.log(f"{line}; recommend total {time.perf_counter() - t0:.0f}s")
                 p.timings.clear()
-            execution = self._board(store, d, session, SnapshotKind.EXECUTION, decision, summary)
+            execution = self._board(
+                store, d, session, SnapshotKind.EXECUTION, decision, summary, held
+            )
             p.clock = _fixed(execution.as_of + RECORD_DELAY)
             p.fill_entries(decision, execution)
             p.manage(decision, execution)
