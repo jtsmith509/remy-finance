@@ -31,8 +31,9 @@ from pathlib import Path
 
 from remy_finance.core import MarketState, Mode, Session
 from remy_finance.data.protocol import OfficialCloseSource
-from remy_finance.data.timeutil import et_at, et_date, previous_session
+from remy_finance.data.timeutil import et_at, et_date, next_session, previous_session
 from remy_finance.registry import Registry, registry_path
+from remy_finance.registry.store import export_lock
 from remy_finance.scheduler.ops import DirtyTreeError, Markers, push_export, record_failure
 from remy_finance.scheduler.pipeline import Pipeline
 from remy_finance.scheduler.runlog import RunLogStore
@@ -62,7 +63,9 @@ class Slot(StrEnum):
 @dataclass
 class Tick:
     data_dir: Path
-    capture: Callable[[Session], MarketState]  # a prospective board, as_of stamped after fetch
+    # A prospective board (as_of stamped after the fetch) of the UNIV-1 members plus the
+    # held names given (DR-0039).
+    capture: Callable[[Session, frozenset[str]], MarketState]
     closes: OfficialCloseSource
     clock: Callable[[], datetime]
     commit: Callable[[], str]  # raises DirtyTreeError
@@ -124,6 +127,8 @@ class Tick:
         path = registry_path(self.data_dir, Mode.PROSPECTIVE)
         with Registry.open_or_create(path, Mode.PROSPECTIVE) as registry:
             self.pipeline = Pipeline(registry, RunLogStore(self.data_dir / "runs"), "", self.clock)
+            with self.guard("reconcile"):
+                self._reconcile(today)
             if is_session(today):
                 for session in (Session.OPEN, Session.CLOSE):
                     with self.guard(f"{session.value.lower()}-session"):
@@ -157,7 +162,7 @@ class Tick:
         if now < start:
             return Slot.PENDING, None
         try:
-            board = self.capture(session)
+            board = self.capture(session, self.pipeline.held(day))
             self.store.write(
                 board,
                 kind=kind,
@@ -184,6 +189,55 @@ class Tick:
         self.log(f"{session.value} {kind.value}: gap ({reason})")
         return Slot.GAP, None
 
+    def _reconcile(self, today: date) -> None:
+        """Resolve the slots of earlier sessions missed while the scheduler was down
+        (Codex R1.6 F05). A watermark file holds the first day not yet reconciled; it starts
+        at the first tick's day. Every unresolved slot of an earlier session becomes a gap:
+        nothing is captured or recommended late. Entries of a stored decision board are
+        resolved against its execution slot (unfilled if that is a gap); positions are
+        managed at the next live board."""
+        path = self.data_dir / "scheduler" / "watermark"
+        if not path.exists():
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(today.isoformat() + "\n", encoding="utf-8")
+            return
+        day = date.fromisoformat(path.read_text(encoding="utf-8").strip())
+        while day < today:
+            if is_session(day):
+                for session in (Session.OPEN, Session.CLOSE):
+                    self._late_session(day, session)
+            day = next_session(day)
+            path.write_text(min(day, today).isoformat() + "\n", encoding="utf-8")
+
+    def _late_session(self, day: date, session: Session) -> None:
+        key = session.value.lower()
+        if self.markers.done(day, f"{key}-done"):
+            return
+        dec_state, decision = self._slot(
+            day, session, SnapshotKind.DECISION, snapshot_time(day, session, SnapshotKind.DECISION)
+        )
+        if decision is not None and not self.markers.done(day, f"{key}-recommend"):
+            self.markers.mark(day, f"{key}-recommend", "SKIPPED: session reconciled late")
+        ex_state, execution = (
+            self._slot(
+                day,
+                session,
+                SnapshotKind.EXECUTION,
+                snapshot_time(day, session, SnapshotKind.EXECUTION),
+                decision,
+            )
+            if decision is not None
+            else self._gap(
+                day, session, SnapshotKind.EXECUTION, "missed: the decision slot is a gap"
+            )
+        )
+        assert dec_state is not Slot.PENDING and ex_state is not Slot.PENDING  # past windows
+        if decision is not None:
+            filled = self.pipeline.fill_entries(decision, execution)
+            if filled:
+                self.log(f"{day} {session.value}: {filled} entry events (reconciled)")
+        self.markers.mark(day, f"{key}-done", "reconciled late")
+
     def _session(self, day: date, session: Session) -> None:
         key = session.value.lower()
         if self.markers.done(day, f"{key}-done"):
@@ -205,12 +259,7 @@ class Tick:
                 self.markers.mark(day, f"{key}-recommend", "SKIPPED: uncommitted changes")
                 self.log(f"{session.value}: recommendations skipped (dirty tree)")
             else:
-                picks = self.pipeline.recommend(decision)
-                self.markers.mark(day, f"{key}-recommend", ",".join(picks))
-                for line in self.pipeline.timings:
-                    self.log(line)
-                self.pipeline.timings.clear()
-                self.log(f"{session.value}: {len(picks)} recommendations")
+                self._recommend(day, session, decision)
 
         exec_start = snapshot_time(day, session, SnapshotKind.EXECUTION)
         if decision is not None:
@@ -227,8 +276,30 @@ class Tick:
         if decision is not None:
             filled = self.pipeline.fill_entries(decision, execution)
             managed = self.pipeline.manage(decision, execution)
+            self._flush_timings()
             self.log(f"{session.value}: {filled} entry events, {managed} position events")
         self.markers.mark(day, f"{key}-done")
+
+    def _recommend(self, day: date, session: Session, decision: MarketState) -> None:
+        """Recommendations, guarded on their own (Codex R1.6 F03): a failing baseline is
+        recorded and the slot is skipped, not retried later with a stale receipt time, and
+        the execution capture, fills and management of the session still run. Picks
+        already recorded before a failure are filled like any other."""
+        key = session.value.lower()
+        ok = False
+        with self.guard(f"{key}-recommend"):
+            picks = self.pipeline.recommend(decision)
+            self.markers.mark(day, f"{key}-recommend", ",".join(picks))
+            self.log(f"{session.value}: {len(picks)} recommendations")
+            ok = True
+        if not ok:
+            self.markers.mark(day, f"{key}-recommend", "FAILED: see data/logs/failures")
+        self._flush_timings()
+
+    def _flush_timings(self) -> None:
+        for line in self.pipeline.timings:
+            self.log(line)
+        self.pipeline.timings.clear()
 
     # ------------------------------------------------------------------ nightly
 
@@ -238,8 +309,10 @@ class Tick:
         if day == today and now < et_at(day, *NIGHTLY_HHMM):
             day = previous_session(today)
         if self.export_repo is not None and not self.markers.done(day, "export"):
-            with self.guard("export"):
-                rows = registry.export(self.export_repo, day)
+            with self.guard("export"), export_lock(self.export_repo):
+                # One lock across write, commit and push, so a concurrent `remy registry
+                # export` cannot interleave; the marker is set only after the push.
+                rows = registry.export(self.export_repo, day, lock=False)
                 commit = self.push(self.export_repo, day, len(rows))
                 self.markers.mark(day, "export", commit)
                 self.log(f"export {day}: {len(rows)} rows, commit {commit[:12] or '-'}")

@@ -75,12 +75,25 @@ class Markers:
             publish_file(path, note + "\n")
 
 
+def _unpushed(repo: Path) -> bool:
+    """True if HEAD is not what the remote branch of the same name points at."""
+    branch = _git(repo, "rev-parse", "--abbrev-ref", "HEAD")
+    remote = _git(repo, "ls-remote", "origin", f"refs/heads/{branch}").split()
+    return not remote or remote[0] != _git(repo, "rev-parse", "HEAD")
+
+
 def push_export(repo: Path, day: date, rows: int) -> str:
     """Commit and push new export lines in ``repo``, a git checkout of the
-    ``registry-export`` branch. Returns the new commit, or "" if nothing changed."""
+    ``registry-export`` branch. Returns HEAD once it is on the remote, or "" if there was
+    nothing to commit or push.
+
+    A push is attempted whenever HEAD is not on the remote, even if the working tree is
+    clean, so an export commit whose push failed earlier is pushed by the retry (Codex
+    R1.6 F01). The caller marks the day exported only after this returns."""
     _git(repo, "add", "-A", ".")
-    if not _git(repo, "status", "--porcelain"):
+    if _git(repo, "status", "--porcelain"):
+        _git(repo, "commit", "-m", f"registry export {day.isoformat()}: {rows} new rows")
+    if not _unpushed(repo):
         return ""
-    _git(repo, "commit", "-m", f"registry export {day.isoformat()}: {rows} new rows")
     _git(repo, "push", "origin", "HEAD")
     return _git(repo, "rev-parse", "HEAD")

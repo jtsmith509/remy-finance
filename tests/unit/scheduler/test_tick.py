@@ -38,7 +38,7 @@ class World:
     def clock(self) -> datetime:
         return self.now
 
-    def capture(self, session: Session) -> MarketState:
+    def capture(self, session: Session, held: frozenset[str] = frozenset()) -> MarketState:
         if self.fail_capture:
             raise ConnectionError("Theta Terminal unreachable")
         self.now += timedelta(seconds=self.fetch_seconds)  # as_of is stamped after the fetch
