@@ -111,7 +111,7 @@ The power estimate's addenda (2026-11-10 and 2026-11-11) record the measured inp
 
 - **Regression tests:** every fix has one (`tests/unit/review/test_codex_r1_*.py`).
 - **The open finding:** **F09**, EVAL-1 §2.2 scoring of the underlying S_T/F forecasts. Josh deferred it to after the live run (2026-11-11). The persisted `rn_quantiles` are the input; no live expiration needs it before the first scored cohort.
-- **The fix check:** a focused re-review of the fixes is out with Codex. **TODO:** its findings.
+- **The fix check** (Codex, at `aa53762`, 2026-11-11): 9 of the 15 fixes are closed and 6 partly closed, with 7 new findings (V01–V07: one high, five medium, one low). None affects the live run (`docs/review/R1-fixes-findings.md`). **TODO:** the fixes, applied after the run.
 
 ## 7. Known limitations
 
