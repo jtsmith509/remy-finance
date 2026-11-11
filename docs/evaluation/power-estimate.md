@@ -124,3 +124,15 @@ Tail exceedances are assumed to share the same correlation as returns. Crashes h
 1. **Sanity property.** With the mid-anchored mean, every prediction on the 3 August board is ≤ −0.2%. MKT-1's picks predicted −0.1% on average and realized −18.8%. Long calls and puts realized −32% and −25%, which is consistent with a volatility risk premium that MKT-1 deliberately leaves out (VRP off in R1).
 2. **Tail coverage looks worse than it is**, for two reasons: realized returns are measured against capital at risk at the *decision* price, so a lost premium filled at a worse execution price counts below −100%; and the forecast has no slippage model. Both are as specified by EVAL-1, and both go in the R1 memo.
 3. **Coverage.** The arbitrage check rejected 250 of 376 expirations on 3 August ("call prices not decreasing with slope in [−DF, 0]"), so MKT-1 and RAND-1 scored only about 13% of candidates. That's an open item in DR-0037.
+
+### Addendum update 2026-11-11: the v3 re-run (the live configuration)
+The August replay was re-run with MKT-1/RAND-1 v3 (DR-0038, arbitrage-free fit). On the 3 August open board, 320 of 376 expirations now fit (85, from 85 of 376 in v2) and 269,846 of 423,057 candidates are scored. No prediction exceeds carry.
+
+| Input | MKT-1 v3 | RAND-1 v3 | Used |
+|---|---|---|---|
+| Fill rate | 100% | 79% | measured |
+| σ | 0.96 | 0.955 | measured |
+| Design effect (10 clusters) | 1.5 | 0.9 | not used (same reasons as above) |
+| ρ | — | — | prior 0.10 kept |
+
+With these inputs and ρ = 0.10, both baselines need about **238 / 59 / 15 months** to detect δ = 5% / 10% / 20%. The smallest δ detectable in 12 months is about **22%**. This is close to the v2 figures above, so the conclusions don't change.
