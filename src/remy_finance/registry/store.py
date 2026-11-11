@@ -17,13 +17,14 @@ exported row is still in the database, byte for byte.
 
 from __future__ import annotations
 
+import fcntl
 import json
 import os
 import sqlite3
 import tempfile
 from collections import defaultdict
 from collections.abc import Iterator, Sequence
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime
 from pathlib import Path
@@ -102,6 +103,38 @@ def _trigger_sql() -> str:
     return "\n".join(parts)
 
 
+def _normalize_sql(sql: str) -> str:
+    return " ".join(sql.replace(";", " ").split()).lower()
+
+
+def _expected_triggers() -> dict[str, str]:
+    """name -> normalized definition of every append-only trigger, from the same SQL that
+    creates them, so ``verify`` can tell an intact guard from a same-name no-op."""
+    out: dict[str, str] = {}
+    for part in _trigger_sql().split("END;"):
+        if part.strip():
+            stmt = part.strip() + " END"
+            out[stmt.split()[2]] = _normalize_sql(stmt)
+    return out
+
+
+EXPECTED_TRIGGERS = _expected_triggers()
+
+
+@contextmanager
+def export_lock(export_dir: Path) -> Iterator[None]:
+    """Cross-process lock for one export directory. The lock file sits next to the
+    directory, not inside it, so it is never committed to the export checkout."""
+    export_dir.parent.mkdir(parents=True, exist_ok=True)
+    path = export_dir.parent / f".{export_dir.name}.export.lock"
+    with path.open("a") as fh:
+        fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
+
+
 def chain_hash(prev_chain: str, record_json: str) -> str:
     return sha256_hex(prev_chain + "\n" + record_json)
 
@@ -124,18 +157,22 @@ class Row:
     record_hash: str
     prev_chain: str
     chain_hash: str
+    kind: str | None = None  # the journal's SQL kind column (None for recommendations)
 
     def export_line(self) -> str:
+        data: dict[str, object] = {
+            "table": self.table,
+            "seq": self.seq,
+            "trade_id": self.trade_id,
+            "record_hash": self.record_hash,
+            "prev_chain": self.prev_chain,
+            "chain_hash": self.chain_hash,
+            "record_json": self.record_json,
+        }
+        if self.kind is not None:  # every stored column is anchored (Codex R1.1 F03)
+            data["kind"] = self.kind
         return json.dumps(
-            {
-                "table": self.table,
-                "seq": self.seq,
-                "trade_id": self.trade_id,
-                "record_hash": self.record_hash,
-                "prev_chain": self.prev_chain,
-                "chain_hash": self.chain_hash,
-                "record_json": self.record_json,
-            },
+            data,
             sort_keys=True,
             separators=(",", ":"),
             ensure_ascii=False,
@@ -242,31 +279,56 @@ class Registry:
             return _insert(conn, "recommendations", rec.trade_id, text)
 
     def add_event(self, event: JournalEvent) -> Row:
-        if event.mode is not self.mode:
-            raise RegistryError(
-                f"{event.mode.value} event refused by the {self.mode.value} registry"
-            )
-        text = event.canonical_json()
+        return self.add_events([event])[0]
+
+    def add_events(self, events: Sequence[JournalEvent]) -> list[Row]:
+        """Append events atomically: all of them or none (Codex R1.2 F01/F02).
+
+        Each event is checked against the trade's committed history plus the events
+        before it in this batch. The history is read *before* any insert, so the read
+        cache can never pick up rows from a transaction that is then rolled back."""
+        if not events:
+            return []
+        for event in events:
+            if event.mode is not self.mode:
+                raise RegistryError(
+                    f"{event.mode.value} event refused by the {self.mode.value} registry"
+                )
         with self._write() as conn:
-            if not conn.execute(
-                "SELECT 1 FROM recommendations WHERE trade_id = ?", (event.trade_id,)
-            ).fetchone():
-                raise RegistryError(f"unknown trade {event.trade_id}")
-            history = self._events(conn, event.trade_id)
-            if event.corrects_seq is not None:
-                target = conn.execute(
-                    "SELECT trade_id FROM journal WHERE seq = ?", (event.corrects_seq,)
-                ).fetchone()
-                if target is None or target[0] != event.trade_id:
-                    raise RegistryError(
-                        f"CORRECTION links journal seq {event.corrects_seq}, "
-                        f"which is not an event of trade {event.trade_id}"
+            histories: dict[str, list[JournalEvent]] = {}
+            for trade_id in dict.fromkeys(e.trade_id for e in events):
+                if not conn.execute(
+                    "SELECT 1 FROM recommendations WHERE trade_id = ?", (trade_id,)
+                ).fetchone():
+                    raise RegistryError(f"unknown trade {trade_id}")
+                histories[trade_id] = [e for _, e in self._events(conn, trade_id)]
+            rows: list[Row] = []
+            for event in events:
+                if event.corrects_seq is not None:
+                    target = conn.execute(
+                        "SELECT trade_id FROM journal WHERE seq = ?", (event.corrects_seq,)
+                    ).fetchone()
+                    if target is None or target[0] != event.trade_id:
+                        raise RegistryError(
+                            f"CORRECTION links journal seq {event.corrects_seq}, "
+                            f"which is not an event of trade {event.trade_id}"
+                        )
+                history = histories[event.trade_id]
+                try:
+                    check_next(history, event)
+                except LifecycleError as e:
+                    raise RegistryError(str(e)) from e
+                rows.append(
+                    _insert(
+                        conn,
+                        "journal",
+                        event.trade_id,
+                        event.canonical_json(),
+                        kind=event.kind.value,
                     )
-            try:
-                check_next([e for _, e in history], event)
-            except LifecycleError as e:
-                raise RegistryError(str(e)) from e
-            return _insert(conn, "journal", event.trade_id, text, kind=event.kind.value)
+                )
+                history.append(event)
+            return rows
 
     # ------------------------------------------------------------------ reads
 
@@ -304,12 +366,26 @@ class Registry:
         return list(self._events_by_trade.get(trade_id, ()))
 
     def rows(self, table: Table, after_seq: int = 0) -> list[Row]:
+        kind = "kind" if table == "journal" else "NULL"
         cur = self._conn.execute(
-            f"SELECT seq, trade_id, record_json, record_hash, prev_chain, chain_hash "
+            f"SELECT seq, trade_id, record_json, record_hash, prev_chain, chain_hash, {kind} "
             f"FROM {table} WHERE seq > ? ORDER BY seq",
             (after_seq,),
         )
-        return [Row(table, int(r[0]), r[1], r[2], r[3], r[4], r[5]) for r in cur]
+        return [Row(table, int(r[0]), r[1], r[2], r[3], r[4], r[5], r[6]) for r in cur]
+
+    @contextmanager
+    def _read_snapshot(self) -> Iterator[None]:
+        """One consistent read transaction (WAL snapshot): concurrent appends by other
+        handles are invisible until it ends (Codex R1.1 F04)."""
+        if self._conn.in_transaction:
+            yield
+            return
+        self._conn.execute("BEGIN")
+        try:
+            yield
+        finally:
+            self._conn.execute("COMMIT")
 
     def head(self, table: Table) -> tuple[int, str]:
         return _head(self._conn, table)
@@ -320,18 +396,26 @@ class Registry:
         """Recompute everything: record hashes, both chains, canonical round trips, modes,
         links, lifecycle order and the presence of the append-only triggers. With
         ``export_dir``, also check every exported row is still present, byte for byte."""
+        with self._read_snapshot():
+            return self._verify(export_dir)
+
+    def _verify(self, export_dir: Path | None) -> VerifyReport:
         report = VerifyReport(mode=self.mode)
         problems = report.problems
         meta = dict(self._conn.execute("SELECT key, value FROM meta").fetchall())
         if meta.get("mode") != self.mode.value or meta.get("schema") != SCHEMA_VERSION:
             problems.append(f"meta table altered: {meta}")
-        triggers = {
-            r[0]
-            for r in self._conn.execute("SELECT name FROM sqlite_master WHERE type = 'trigger'")
+        installed = {
+            str(name): _normalize_sql(str(sql or ""))
+            for name, sql in self._conn.execute(
+                "SELECT name, sql FROM sqlite_master WHERE type = 'trigger'"
+            )
         }
-        for name in TRIGGERS:
-            if name not in triggers:
+        for name, expected in EXPECTED_TRIGGERS.items():
+            if name not in installed:
                 problems.append(f"append-only trigger {name} is missing")
+            elif installed[name] != expected:  # same name, different body (Codex R1.1 F02)
+                problems.append(f"append-only trigger {name} has been altered")
 
         trade_ids: set[str] = set()
         by_seq: dict[int, str] = {}
@@ -386,6 +470,8 @@ class Registry:
                 out.append(f"duplicate trade {record.trade_id}")
             trade_ids.add(record.trade_id)
             return out
+        if row.kind != record.kind.value:  # Codex R1.1 F03
+            out.append(f"kind column {row.kind!r} differs from the event's {record.kind.value}")
         if record.trade_id not in trade_ids:
             out.append(f"event for unknown trade {record.trade_id}")
         if record.corrects_seq is not None and by_seq.get(record.corrects_seq) != record.trade_id:
@@ -415,20 +501,25 @@ class Registry:
 
     # ------------------------------------------------------------------ export, backup
 
-    def export(self, export_dir: Path, day: date) -> list[Row]:
+    def export(self, export_dir: Path, day: date, *, lock: bool = True) -> list[Row]:
         """Write rows not yet exported to ``export_dir/<mode>/YYYY/MM/DD.jsonl`` (one JSON line
         per row, recommendations then journal, in sequence order). Earlier lines are kept
-        unchanged; the file is replaced atomically. Returns the rows written."""
-        export_dir = export_dir / self.mode.value.lower()
-        exported = _exported_heads(export_dir)
-        new = [r for t in TABLES for r in self.rows(t, exported.get(t, 0))]
-        if not new:
-            return []
-        path = export_dir / f"{day:%Y}" / f"{day:%m}" / f"{day:%d}.jsonl"
-        old = path.read_text(encoding="utf-8") if path.exists() else ""
-        text = old + "".join(r.export_line() + "\n" for r in new)
-        _replace_atomically(path, text)
-        return new
+        unchanged; the file is replaced atomically. Returns the rows written.
+
+        The whole read-append-publish runs under a cross-process export lock and one
+        consistent database snapshot, so two exporters can never erase each other's lines
+        (Codex R1.1 F01). ``lock=False`` is for callers already holding ``export_lock``."""
+        with export_lock(export_dir) if lock else nullcontext(), self._read_snapshot():
+            mode_dir = export_dir / self.mode.value.lower()
+            exported = _exported_heads(mode_dir)
+            new = [r for t in TABLES for r in self.rows(t, exported.get(t, 0))]
+            if not new:
+                return []
+            path = mode_dir / f"{day:%Y}" / f"{day:%m}" / f"{day:%d}.jsonl"
+            old = path.read_text(encoding="utf-8") if path.exists() else ""
+            text = old + "".join(r.export_line() + "\n" for r in new)
+            _replace_atomically(path, text)
+            return new
 
     def backup(self, backup_dir: Path, now: datetime | None = None) -> Path:
         """A consistent copy via SQLite's online backup, named by UTC time (DR-0012)."""
