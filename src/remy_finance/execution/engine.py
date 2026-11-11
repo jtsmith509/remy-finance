@@ -262,6 +262,21 @@ class PaperEngine:
     def _append(
         self, rec: Recommendation, kind: EventKind, at: datetime, now: datetime, **kw: object
     ) -> JournalEvent:
+        ev = self._event(rec, kind, at, now, **kw)
+        self.registry.add_event(ev)
+        return ev
+
+    def _commit(self, events: list[JournalEvent]) -> list[JournalEvent]:
+        """Append events atomically (all or none): Codex R1.2 F01/F02."""
+        self.registry.add_events(events)
+        return events
+
+    def _history(self, trade_id: str) -> list[JournalEvent]:
+        return [e for _, e in self.registry.events(trade_id)]
+
+    def _event(
+        self, rec: Recommendation, kind: EventKind, at: datetime, now: datetime, **kw: object
+    ) -> JournalEvent:
         evidence = kw.pop("evidence", None)
         fields: dict[str, object] = {
             "trade_id": rec.trade_id,
@@ -272,11 +287,8 @@ class PaperEngine:
             **kw,
         }
         if isinstance(evidence, Record):
-            ev = JournalEvent.with_evidence(evidence, **fields)
-        else:
-            ev = JournalEvent.model_validate(fields)
-        self.registry.add_event(ev)
-        return ev
+            return JournalEvent.with_evidence(evidence, **fields)
+        return JournalEvent.model_validate(fields)
 
     def _policy(self, rec: Recommendation) -> ExitPolicy:
         try:
@@ -321,7 +333,32 @@ class PaperEngine:
             return None
         return next((u for u in board.underlying_quotes if u.symbol == symbol), None)
 
-    def _close_trade(self, pos: Position, now: datetime) -> JournalEvent:
+    def _with_close(
+        self, rec: Recommendation, terminal: list[JournalEvent], now: datetime
+    ) -> list[JournalEvent]:
+        """``terminal`` plus, if they leave the trade resolved, its TRADE_CLOSED summary,
+        committed together, so a crash can't leave a resolved trade without its close."""
+        after = position_of(rec, [*self._history(rec.trade_id), *terminal])
+        batch = list(terminal)
+        if after.is_flat and after.exit_pending_since is None and not after.closed:
+            batch.append(self._close_event(after, now))
+        return self._commit(batch)
+
+    def repair_close(self, trade_id: str, now: datetime) -> list[JournalEvent]:
+        """Close a trade that is resolved (unfilled, exited or settled) but has no
+        TRADE_CLOSED, e.g. a history written before closes were atomic."""
+        pos = self.position(trade_id)
+        if (
+            pos.submitted
+            and not pos.closed
+            and pos.is_flat
+            and pos.exit_pending_since is None
+            and (pos.entry_unfilled or pos.entry_filled)
+        ):
+            return self._commit([self._close_event(pos, now)])
+        return []
+
+    def _close_event(self, pos: Position, now: datetime) -> JournalEvent:
         rec = pos.rec
         car = rec.capital_at_risk
         realized: Decimal | None = None
@@ -343,7 +380,7 @@ class PaperEngine:
             exit_attempts=pos.exit_attempts,
         )
         at = pos.last_time or rec.receipt_time
-        return self._append(rec, E.TRADE_CLOSED, at, now, evidence=summary)
+        return self._event(rec, E.TRADE_CLOSED, at, now, evidence=summary)
 
     # ------------------------------------------------------------------ entry
 
@@ -369,7 +406,7 @@ class PaperEngine:
         if not pos.submitted:
             raise EngineError("submit the order before filling it")
         if pos.entry_filled or pos.entry_unfilled:
-            return []
+            return self.repair_close(trade_id, now)
         self._check_execution(rec, rec.decision_time, execution)
         legs = rec.candidate.legs
         fill = fill_order(
@@ -388,9 +425,8 @@ class PaperEngine:
         at = max(at, rec.receipt_time)
         if not fill.filled:
             note = missing_reason if execution is None else _unfilled_note(fill)
-            out = [self._append(rec, E.ORDER_UNFILLED, at, now, evidence=fill, note=note)]
-            out.append(self._close_trade(self.position(trade_id), now))
-            return out
+            unfilled = self._event(rec, E.ORDER_UNFILLED, at, now, evidence=fill, note=note)
+            return self._with_close(rec, [unfilled], now)
         assert execution is not None  # a fill needs quotes
         out = []
         total = ZERO
@@ -399,7 +435,7 @@ class PaperEngine:
             with exact_decimal(total, cash):
                 total += cash
             out.append(
-                self._append(
+                self._event(
                     rec,
                     E.LEG_FILLED,
                     at,
@@ -411,7 +447,7 @@ class PaperEngine:
             )
         if total != fill.net_cash:  # pragma: no cover - guards the per-leg fee split
             raise EngineError(f"leg cash {total} != order net cash {fill.net_cash}")
-        return out
+        return self._commit(out)  # every leg or none (all-or-none entry)
 
     # ------------------------------------------------------------------ while open
 
@@ -426,7 +462,7 @@ class PaperEngine:
         pos = self.position(trade_id)
         rec = pos.rec
         if not pos.is_open:
-            return []
+            return self.repair_close(trade_id, now)
         self._check_board(rec, decision, "decision")
         if et_date(decision.as_of) > rec.expiration:
             raise EngineError("the position is past expiration: settle it")
@@ -507,22 +543,19 @@ class PaperEngine:
         )
         at = execution.as_of if execution is not None else self._execution_window(decision.as_of)[0]
         kind = E.EXIT_FILLED if filled else E.EXIT_UNFILLED
-        out = [
-            self._append(
-                rec,
-                kind,
-                at,
-                now,
-                evidence=result,
-                cash=cash,
-                note=result.note,
-                snapshot_id=execution.snapshot_id if execution else None,
-            )
-        ]
-        after = self.position(rec.trade_id)
-        if after.is_flat and kind is E.EXIT_FILLED:
-            out.append(self._close_trade(after, now))
-        return out
+        ev = self._event(
+            rec,
+            kind,
+            at,
+            now,
+            evidence=result,
+            cash=cash,
+            note=result.note,
+            snapshot_id=execution.snapshot_id if execution else None,
+        )
+        if kind is E.EXIT_FILLED:
+            return self._with_close(rec, [ev], now)
+        return self._commit([ev])
 
     def _assess_assignments(
         self, pos: Position, decision: MarketState, now: datetime
@@ -580,11 +613,11 @@ class PaperEngine:
     # ------------------------------------------------------------------ expiration
 
     def settle(self, trade_id: str, close: OfficialClose, now: datetime) -> list[JournalEvent]:
-        """EXP-1 on whatever is still open, then close the trade."""
+        """EXP-1 on whatever is still open, then close the trade (atomically)."""
         pos = self.position(trade_id)
         rec = pos.rec
         if not pos.is_open:
-            return []
+            return self.repair_close(trade_id, now)
         symbol = self._underlying(rec)
         if close.symbol != symbol or close.session_date != rec.expiration:
             raise EngineError(
@@ -627,20 +660,17 @@ class PaperEngine:
             with exact_decimal(cash, stock.cash, stock.fees):
                 cash += stock.cash - stock.fees
         flags = ",".join(settlement.flags) if settlement is not None else ""
-        out = [
-            self._append(
-                rec,
-                E.EXPIRATION_SETTLED,
-                close.event_time,
-                now,
-                evidence=result,
-                cash=cash,
-                public_time=close.public_time,
-                note=flags,
-            )
-        ]
-        out.append(self._close_trade(self.position(trade_id), now))
-        return out
+        settled = self._event(
+            rec,
+            E.EXPIRATION_SETTLED,
+            close.event_time,
+            now,
+            evidence=result,
+            cash=cash,
+            public_time=close.public_time,
+            note=flags,
+        )
+        return self._with_close(rec, [settled], now)
 
 
 # ---------------------------------------------------------------------- pure helpers

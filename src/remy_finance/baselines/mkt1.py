@@ -351,6 +351,48 @@ def bin_probabilities(
     return dec
 
 
+class InfeasibleMean(ValueError):
+    """The anchored mean lies outside the structure's attainable return range."""
+
+
+def return_bounds(c: Candidate) -> tuple[float, float]:
+    """The structure's attainable net returns on capital at risk: -1 (losing all capital
+    at risk) to max gain net of fees (inf when the upside is unbounded)."""
+    s = c.structure
+    assert s is not None
+    car = float(s.capital_at_risk)
+    best = math.inf if s.max_gain is None else float(s.max_gain - s.entry_fees - s.exit_fees) / car
+    return -1.0, best
+
+
+def shift_to_mean(
+    r: FloatArray, probs: FloatArray, target: float, lo: float, hi: float
+) -> FloatArray:
+    """``clip(r + delta, lo, hi)`` with delta chosen so the weighted mean equals ``target``
+    exactly. [lo, hi] is the structure's attainable range (``return_bounds``); the clipped
+    mean is non-decreasing in delta, so bisection finds it (Codex R1.2 F03)."""
+    tol = 1e-9 * max(1.0, abs(lo), abs(hi) if math.isfinite(hi) else 1.0)
+    if not lo - tol <= target <= hi + tol:
+        raise InfeasibleMean(f"mean {target} outside the attainable range [{lo}, {hi}]")
+    target = min(max(target, lo), hi)
+    d_lo = lo - float(r.max()) - 1.0  # everything clipped to lo: mean = lo <= target
+    d_hi = target - float(r.min()) + 1.0  # mean >= target (hi = inf) or = hi >= target
+    for _ in range(200):
+        mid = 0.5 * (d_lo + d_hi)
+        if float(np.dot(np.clip(r + mid, lo, hi), probs)) < target:
+            d_lo = mid
+        else:
+            d_hi = mid
+        if d_hi - d_lo < 1e-15:
+            break
+    return np.clip(r + 0.5 * (d_lo + d_hi), lo, hi)
+
+
+def anchored_mean_feasible(c: Candidate, mean: float) -> bool:
+    lo, hi = return_bounds(c)
+    return lo - 1e-9 <= mean <= hi + 1e-9
+
+
 def return_distribution(
     model: ExpiryModel,
     c: Candidate,
@@ -360,15 +402,17 @@ def return_distribution(
 ) -> tuple[list[tuple[Decimal, Decimal]], list[tuple[str, Decimal]], list[Decimal]]:
     """Quantiles, tail measures and bin probabilities of the predicted net return.
 
-    With ``mean`` (MKT-1 v2), the density's return distribution keeps its shape but is
-    shifted so its mean equals ``mean``, then clipped to the attainable range (DR-0037)."""
+    With ``mean`` (MKT-1 v2+), the density's return distribution keeps its shape, shifted
+    and clipped to the attainable range so that its mean is *exactly* ``mean`` after the
+    clipping (DR-0037; Codex R1.2 F03). Every recorded field comes from that distribution."""
     s = c.structure
     assert s is not None
     cost = float(s.net_premium + s.entry_fees + s.exit_fees)
     r = (model.payoff_on_support(c) - cost) / float(s.capital_at_risk)
     probs = model.dist.probs
     if mean is not None:
-        r = np.clip(r + (mean - float(np.dot(r, probs))), r.min(), r.max())
+        lo, hi = return_bounds(c)
+        r = shift_to_mean(r, probs, mean, lo, hi)
     quantiles = _quantiles(r, probs, QUANTILE_PROBS, places)
     order = np.argsort(r, kind="stable")
     r_sorted, p_sorted = r[order], probs[order]
@@ -416,6 +460,14 @@ class BoardScore:
     fits: tuple[ExpirationFit, ...]
     scored: tuple[Scored, ...]  # in candidate order; bug signals excluded
     bug_signals: tuple[tuple[str, Decimal], ...]
+    infeasible: int = 0  # anchored mean outside the attainable range (incoherent quotes)
+
+    @property
+    def flags(self) -> tuple[str, ...]:
+        out = ["AMERICAN_EXERCISE_PREMIUM_IGNORED"]
+        if self.infeasible:
+            out.append(f"INFEASIBLE_MEAN_SKIPPED:{self.infeasible}")
+        return tuple(out)
 
     def model_for(self, c: Candidate) -> ExpiryModel:
         model = self.models[(underlying_of(c), c.legs[0].contract.expiration)]
@@ -453,6 +505,7 @@ def score_board(
             models[key] = model
             fits.append(fit)
     mids = board_mids(board)
+    infeasible = 0
     scored: list[Scored] = []
     bug_signals: list[tuple[str, Decimal]] = []
     for i, c in enumerate(usable):
@@ -462,11 +515,16 @@ def score_board(
         mean = anchored_return(model, c, mids)
         if mean is None:
             continue
+        if not anchored_mean_feasible(c, mean):  # incoherent quotes: no consistent forecast
+            infeasible += 1
+            continue
         if mean > float(cfg.bug_signal_return):  # now only a crossed or stale quote can do this
             bug_signals.append((c.content_hash(), to_decimal_places(mean, cfg.return_places)))
             continue
         scored.append(Scored(c, mean, i))
-    return BoardScore(cfg, tuple(usable), models, tuple(fits), tuple(scored), tuple(bug_signals))
+    return BoardScore(
+        cfg, tuple(usable), models, tuple(fits), tuple(scored), tuple(bug_signals), infeasible
+    )
 
 
 def shortfall_note(n: int, k: int, score: BoardScore, excluded: frozenset[str]) -> str:
@@ -540,6 +598,6 @@ def run_mkt1(
         shortfall=shortfall,
         fits=score.fits,
         bug_signals=score.bug_signals,
-        flags=("AMERICAN_EXERCISE_PREMIUM_IGNORED",),
+        flags=score.flags,
     )
     return recs, run

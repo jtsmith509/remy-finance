@@ -123,6 +123,6 @@ def run_rand1(
         fits=score.fits,
         bug_signals=score.bug_signals,
         random_seed=seed,
-        flags=("AMERICAN_EXERCISE_PREMIUM_IGNORED",),
+        flags=score.flags,
     )
     return recs, run
