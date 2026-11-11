@@ -60,7 +60,7 @@ Nothing to do. To see what happened, read today's log:
 cat data/logs/$(date -u +%Y-%m-%d).log
 ```
 
-Failures also raise a macOS notification and are written under `data/logs/failures/`.
+Failures also raise a macOS notification and are written under `data/logs/failures/`. A failed recommendation step skips that session's recommendations, but the execution snapshot, fills and position management still run.
 
 ## Stopping and restarting
 ```bash
@@ -68,6 +68,8 @@ launchctl bootout gui/$(id -u)/com.remy-finance.tick
 ```
 
 To start again, repeat the `launchctl bootstrap` command in step 5.
+
+After a restart, the first tick records every slot missed while the scheduler was stopped as a gap, back to the day of the very first tick (`data/scheduler/watermark`). Nothing is captured or recommended late. Orders from a decision whose execution snapshot was missed are recorded as unfilled.
 
 ## Updating the code
 Recommendations are skipped while the code has uncommitted changes (DR-0033), so `git pull` and keep the tree clean. Each recommendation records the commit that produced it.
