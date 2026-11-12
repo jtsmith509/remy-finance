@@ -28,7 +28,7 @@ None of V01–V07 needs the live run to stop or the code to change mid-run.
 
 ## Resolution
 
-**Fixes are applied after the live run** (Josh, 2026-11-11: no code changes during it), each with Codex's probe as its regression test.
+**Fixes are applied after the live run (last session Tuesday 17 November)** (Josh, 2026-11-11: no code changes during it), each with Codex's probe as its regression test.
 
 | # | Finding | Planned fix | Commit |
 |---|---|---|---|

@@ -141,7 +141,7 @@ Your original reproduction tests are worth re-running unmodified against `aa5376
 - Everything settled in the earlier briefs (DR-0028 to DR-0038).
 - **DR-0039:** boards carry held names, and recommendations are member-only.
 - **F09 deferred** until after the live run.
-- **No code changes during the live run** (12–18 November). Fixes land afterwards.
+- **No code changes during the live run** (11–17 November). Fixes land afterwards.
 
 ## 5. How to report
 - **For each original finding:** "closed", "partly closed" or "not closed", with the reason.

@@ -1,7 +1,7 @@
 # R1 result: registry, paper execution, baselines and the live run (Stop Point C)
 
 - **Stage:** R1 (handoff §6)
-- **Date:** drafted 2026-11-11; the live-run section is completed after the 5-day run (12–18 November 2026)
+- **Date:** drafted 2026-11-11; the live-run section is completed after the 5-day run (11–17 November 2026)
 - **Branch:** `claude/cool-pascal-80kptn`
 
 > **DRAFT.** Everything except §5 (the 5-day live run) and the final gate numbers is written from results already in hand. **TODO** marks the parts that wait for the live run.
@@ -88,8 +88,21 @@ The power estimate's addenda (2026-11-10 and 2026-11-11) record the measured inp
 ## 5. The 5-day live run (TODO)
 
 - **Installed:** 2026-11-11 (launchd, `remy run tick` every minute). `remy doctor` was clean apart from the expected pre-start warnings.
-- **Install day:** the scheduler was installed on Wednesday 11 November, after that day's windows had closed. Its first tick records the missed 11 November slots as gaps, which is correct and outside the 5-day count. Earlier days are never touched, because the reconciliation watermark starts at the first tick.
-- **Sessions:** **TODO.** Expected: Thursday 12 to Wednesday 18 November 2026, 5 sessions with 2 slots each, for 20 snapshot slots.
+- **Install:** the first tick ran at 00:13 ET on Wednesday 11 November (05:13 UTC). Its nightly step exported 0 rows for 10 November and backed up the empty registry. The reconciliation watermark starts on 11 November.
+- **Sessions:** Wednesday 11 to Tuesday 17 November 2026 (11, 12, 13, 16 and 17 November): 5 sessions with 2 slots each, for 20 snapshot slots.
+- **Day 1, Wednesday 11 November** (from the scheduler log and `remy doctor`):
+
+| Step | OPEN | CLOSE |
+|---|---|---|
+| Decision board stored (as_of, ET) | 10:01:48 | 15:46:33 |
+| Candidates; movegen / scoring time | 400,021; 26 s / 17 s | 404,654; 26 s / 10 s |
+| Recommendations | 10 | 10 |
+| Execution board stored (as_of, ET) | 10:07:58 | 15:53:31 |
+| Entry events | 21 | 23 |
+| Position events | 0 | 0 |
+
+  - **Nightly step (17:30 ET):** exported 84 rows (`registry-export` commit `ada8133803bf`) and wrote the backup `prospective-20261111T223026Z.sqlite`.
+  - **`remy doctor` afterwards:** every line OK. The prospective registry holds 20 recommendations and 64 journal rows; the last snapshot is 2026-11-11 CLOSE, stored; no failures in 24 h; the code tree is clean.
 - **TODO, per day:**
   - decision and execution snapshots stored, or gaps with reasons;
   - capture timing;
