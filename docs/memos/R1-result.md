@@ -101,6 +101,7 @@ The power estimate's addenda (2026-11-10 and 2026-11-11) record the measured inp
 | Entry events | 21 | 23 |
 | Position events | 0 | 0 |
 
+  - **Daily report:** MKT-1 v3 filled 10 of 10 entries (13 legs). RAND-1 v3 filled 9 of 10 (29 legs); its 1 unfilled order closed the same day. 0 snapshot gaps. Every record names engine commit `aa53762`. The 44 entry events (13 + 29 legs, 1 unfilled, 1 close) match the log's 21 + 23.
   - **Nightly step (17:30 ET):** exported 84 rows (`registry-export` commit `ada8133803bf`) and wrote the backup `prospective-20261111T223026Z.sqlite`.
   - **`remy doctor` afterwards:** every line OK. The prospective registry holds 20 recommendations and 64 journal rows; the last snapshot is 2026-11-11 CLOSE, stored; no failures in 24 h; the code tree is clean.
 - **TODO, per day:**
