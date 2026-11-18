@@ -1,6 +1,6 @@
 # DR-0042: Rank on return in excess of the risk-free rate (from R2)
 
-- **Status:** proposed (Josh chose this at Stop Point C, 2026-11-18; awaiting confirmation of this record)
+- **Status:** accepted (Josh, 2026-11-18). The risk-free return is taken on capital at risk; only the ranking key changes (ADJ-1).
 - **Date:** 2026-11-18
 - **Source:** the live run's sanity check (`docs/memos/R1-result.md` §4). Builds on [DR-0037](DR-0037-mkt1-v2.md).
 - **Stage:** R1 decision, effective at R2
@@ -17,9 +17,11 @@
 
 ## Decision
 - **R1:** MKT-1 v3 is unchanged. The memo explains the departure from the handoff's sanity wording.
-- **From R2:** engines rank and select on the predicted net return **minus the risk-free return** over the trade's horizon, using the board's rate (the discount factor already used, so (1 ÷ DF − 1) on the capital committed).
+- **From R2:** engines rank and select on the predicted net return **minus the risk-free return on capital at risk** over the trade's horizon: predicted mean − (1 ÷ DF − 1), with DF the board's discount factor for the expiration (the one MKT-1 already uses).
+  - Capital at risk is the base for every structure, debit or credit, consistent with how returns are measured. For a credit spread, that's the margin posted, not the premium received.
   - The recorded predicted distribution stays the net return on capital at risk that EVAL-1 scores. Only the ranking key changes.
-  - Each record names its ranking key in its search config.
+  - Each record names its ranking key in its search config and `ranking_adjustment` (ADJ-1).
+  - The excess return is not stored as a new field. It can be recomputed from the record's mean and capital at risk plus the DF in the run log's fit, so the Recommendation schema is unchanged.
 - **EVAL-1 is unaffected:** it scores forecasts and realized returns, not ranks. The excess-return view of results belongs to EVAL-2 if it's wanted.
 
 ## Consequences

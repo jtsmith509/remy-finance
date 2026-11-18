@@ -1,6 +1,6 @@
 # DR-0040: Scoring MKT-1's underlying (S_T/F) forecasts
 
-- **Status:** proposed (Josh chose on 2026-11-18 to build F09 before closing Stop Point C; awaiting confirmation of the details below)
+- **Status:** accepted (Josh, 2026-11-18). Every fit on every board is an observation; the density is linear with a 10⁻⁴ floor; closes are fetched at report time.
 - **Date:** 2026-11-18
 - **Source:** Codex R1.6 F09 (`docs/review/R1.6-R1.8-findings.md`). It implements EVAL-1 §2.2 (frozen) and uses the forecasts recorded under [DR-0032](DR-0032-forecast-records-eval1.md).
 - **Stage:** R1, before Stop Point C
@@ -32,3 +32,4 @@
 - **Many correlated observations:** every board refits every expiration, so there are many observations per expiration. The bootstrap clusters by expiration week, which keeps the intervals honest.
 - **A miscalibrated risk-neutral density is expected,** because of risk premia (§2.2). It's reported, not treated as a defect.
 - **The report needs the Theta Terminal** for this section. Without it, the section says so.
+- **Closes aren't stored.** A vendor revision of an official close would change later reports. ThetaData's EOD closes were verified against the exchange in R0.1, so this is accepted. A write-once close store remains possible later, through a new DR.

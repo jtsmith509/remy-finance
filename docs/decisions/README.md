@@ -41,8 +41,8 @@
 | [DR-0037](DR-0037-mkt1-v2.md) | MKT-1 v2 (mid-anchored mean, DF from rates); redo the replay month | R1 | accepted |
 | [DR-0038](DR-0038-arbitrage-free-svi.md) | Arbitrage-free SVI fit (MKT-1 v3) | R1 | accepted |
 | [DR-0039](DR-0039-held-names-on-boards.md) | Held names on captured boards | R1 | accepted |
-| [DR-0040](DR-0040-underlying-forecast-scores.md) | Scoring MKT-1's underlying (S_T/F) forecasts (F09) | R1 | proposed |
-| [DR-0041](DR-0041-exclude-candidates-that-cannot-win.md) | Exclude candidates that can only lose | from R2 | proposed |
-| [DR-0042](DR-0042-rank-on-excess-return.md) | Rank on return in excess of the risk-free rate | from R2 | proposed |
+| [DR-0040](DR-0040-underlying-forecast-scores.md) | Scoring MKT-1's underlying (S_T/F) forecasts (F09) | R1 | accepted |
+| [DR-0041](DR-0041-exclude-candidates-that-cannot-win.md) | Exclude candidates that can only lose | from R2 | accepted |
+| [DR-0042](DR-0042-rank-on-excess-return.md) | Rank on return in excess of the risk-free rate | from R2 | accepted |
 
 Each record has these sections: context, options considered, decision, consequences. Status stays *proposed* until Josh confirms it. A confirmed DR is superseded only by a new, linked DR; it is never edited in place.

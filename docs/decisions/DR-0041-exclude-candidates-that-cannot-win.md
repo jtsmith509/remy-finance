@@ -1,6 +1,6 @@
 # DR-0041: Exclude candidates that can only lose (from R2)
 
-- **Status:** proposed (Josh chose this at Stop Point C, 2026-11-18; awaiting confirmation of this record)
+- **Status:** accepted (Josh, 2026-11-18). The threshold is best return > 0, and both baselines change version together.
 - **Date:** 2026-11-18
 - **Source:** the live run's Codex V04 exposure check (`docs/memos/R1-result.md` §6). Amends the eligibility rule of [DR-0030](DR-0030-mkt1-details.md) and [DR-0031](DR-0031-rand1-details.md), from R2.
 - **Stage:** R1 decision, effective at R2

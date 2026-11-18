@@ -10,7 +10,7 @@
 > - **Replay month:** done. August 2026 ran end to end three times (MKT-1/RAND-1 v1, v2, v3). The replay registry passed `registry verify`, and the reports ran.
 > - **5-day live run:** done. Five consecutive sessions (11, 12, 13, 16 and 17 November) ran with **no manual intervention**: 20 of 20 snapshot slots stored, 0 gaps, 0 failures, five nightly exports pushed, and `registry verify --export-dir` OK (§5).
 > - **Sanity property:** shown, with one explained departure. MKT-1 v3's predictions are carry − (half-spreads + fees), as DR-0037 defines. Live picks therefore range from −0.2% to +0.4%, the positive ones being long-dated options whose carry exceeds their spread cost. All are far below the 5% bug-signal threshold (§4).
-> - **Decision records:** DR-0028 to DR-0039 accepted. **DR-0040 to DR-0042 proposed** (2026-11-18, from the Stop Point C decisions), awaiting confirmation.
+> - **Decision records:** DR-0028 to DR-0042 all accepted (DR-0040 to DR-0042 on 2026-11-18). None are awaiting confirmation.
 > - **Independent review:** Codex found 16 defects at `b38b9b1`, all now fixed (F09 on 2026-11-18). Codex's check of the fixes found 7 more (V01–V07), all fixed (§6). Every fix has a regression test.
 > - **Gate:** ruff, format and mypy clean; **pytest 549 passed** (§2).
 
@@ -200,10 +200,10 @@ The power estimate's addenda (2026-11-10 and 2026-11-11) record the measured inp
   - The mean is anchored at mid (DR-0037).
   - MOVEGEN-2 is the default (DR-0035).
   - Boards carry held names (DR-0039).
-- **Proposed at Stop Point C (2026-11-18), awaiting confirmation:**
-  - DR-0040: the F09 scoring details;
-  - DR-0041: exclude candidates that can only lose, from R2;
-  - DR-0042: rank on return in excess of the risk-free rate, from R2.
+- **Accepted at Stop Point C (Josh, 2026-11-18):**
+  - DR-0040: the F09 scoring details (every fit on every board; a linear density with a 10⁻⁴ floor; closes fetched at report time);
+  - DR-0041: from R2, exclude candidates whose best return is ≤ 0, and bump both baselines' versions;
+  - DR-0042: from R2, rank on return in excess of the risk-free rate on capital at risk (ADJ-1); the recorded forecasts are unchanged.
 
 ## 9. Decisions at Stop Point C (Josh, 2026-11-18)
 
