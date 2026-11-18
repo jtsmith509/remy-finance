@@ -59,6 +59,7 @@ from remy_finance.baselines.smile import (
 )
 from remy_finance.core import Candidate, MarketState, OptionQuote, Record, Right
 from remy_finance.core.exact import exact_decimal
+from remy_finance.core.payoff import payoff_extremes
 from remy_finance.core.types import PosDec
 from remy_finance.data.timeutil import NEW_YORK
 from remy_finance.movegen.generator import list_hash
@@ -357,11 +358,16 @@ class InfeasibleMean(ValueError):
 
 def return_bounds(c: Candidate) -> tuple[float, float]:
     """The structure's attainable net returns on capital at risk: -1 (losing all capital
-    at risk) to max gain net of fees (inf when the upside is unbounded)."""
+    at risk) to the best terminal P&L net of fees (inf when the upside is unbounded).
+
+    The best P&L is the *signed* maximum of the payoff net of premium, not ``max_gain``,
+    which is floored at zero: a spread whose executable debit exceeds its width can only
+    lose, and its upper bound is negative (Codex V04)."""
     s = c.structure
     assert s is not None
     car = float(s.capital_at_risk)
-    best = math.inf if s.max_gain is None else float(s.max_gain - s.entry_fees - s.exit_fees) / car
+    _low, high = payoff_extremes(s.legs, s.net_premium)
+    best = math.inf if high is None else float(high - s.entry_fees - s.exit_fees) / car
     return -1.0, best
 
 
