@@ -125,6 +125,9 @@ EXPECTED_TRIGGERS = _expected_triggers()
 def export_lock(export_dir: Path) -> Iterator[None]:
     """Cross-process lock for one export directory. The lock file sits next to the
     directory, not inside it, so it is never committed to the export checkout."""
+    # The lock is named from the resolved directory, so path aliases (symlinks, relative
+    # spellings) of one export directory share one lock (Codex V02).
+    export_dir = export_dir.resolve()
     export_dir.parent.mkdir(parents=True, exist_ok=True)
     path = export_dir.parent / f".{export_dir.name}.export.lock"
     with path.open("a") as fh:
@@ -159,7 +162,11 @@ class Row:
     chain_hash: str
     kind: str | None = None  # the journal's SQL kind column (None for recommendations)
 
-    def export_line(self) -> str:
+    def export_line(self, *, legacy: bool = False) -> str:
+        """The canonical export line. ``legacy``: the format written before the kind column
+        was exported (``b38b9b1`` and earlier), identical except that it has no ``kind``.
+        Lines already pushed in that format are verified as they are, never rewritten
+        (Codex V01)."""
         data: dict[str, object] = {
             "table": self.table,
             "seq": self.seq,
@@ -169,7 +176,7 @@ class Row:
             "chain_hash": self.chain_hash,
             "record_json": self.record_json,
         }
-        if self.kind is not None:  # every stored column is anchored (Codex R1.1 F03)
+        if self.kind is not None and not legacy:  # every stored column is anchored (R1.1 F03)
             data["kind"] = self.kind
         return json.dumps(
             data,
@@ -392,11 +399,21 @@ class Registry:
 
     # ------------------------------------------------------------------ verify
 
-    def verify(self, export_dir: Path | None = None) -> VerifyReport:
+    def verify(self, export_dir: Path | None = None, *, lock: bool = True) -> VerifyReport:
         """Recompute everything: record hashes, both chains, canonical round trips, modes,
         links, lifecycle order and the presence of the append-only triggers. With
-        ``export_dir``, also check every exported row is still present, byte for byte."""
-        with self._read_snapshot():
+        ``export_dir``, also check every exported row is still present, byte for byte.
+
+        With an existing ``export_dir``, the export lock is taken *before* the read
+        snapshot, so the files and the database are compared as of one moment: an export
+        can't publish rows newer than the snapshot mid-check (Codex V03). ``lock=False`` is
+        for a caller that already holds it."""
+        held = (
+            export_lock(export_dir)
+            if lock and export_dir is not None and export_dir.exists()
+            else nullcontext()
+        )
+        with held, self._read_snapshot():
             return self._verify(export_dir)
 
     def _verify(self, export_dir: Path | None) -> VerifyReport:
@@ -494,7 +511,13 @@ class Registry:
                 data = json.loads(line)
                 key = (data["table"], int(data["seq"]))
                 row = current.get(key)
-                if row is None or row.export_line() != line:
+                ok = row is not None and (
+                    row.export_line() == line
+                    # A pre-kind journal line (Codex V01): the rest must match exactly. The
+                    # SQL kind column is still checked against the event by _check_record.
+                    or ("kind" not in data and row.export_line(legacy=True) == line)
+                )
+                if not ok:
                     problems.append(f"{path.name}:{n}: exported {key} is missing or changed")
                 checked += 1
         return checked
@@ -554,7 +577,9 @@ def _insert(
     conn: sqlite3.Connection, table: Table, trade_id: str, text: str, kind: str | None = None
 ) -> Row:
     seq, prev = _head(conn, table)
-    row = Row(table, seq + 1, trade_id, text, sha256_hex(text), prev, chain_hash(prev, text))
+    row = Row(
+        table, seq + 1, trade_id, text, sha256_hex(text), prev, chain_hash(prev, text), kind
+    )  # the returned row carries the stored kind too (Codex V07)
     cols = ["seq", "trade_id", "record_json", "record_hash", "prev_chain", "chain_hash"]
     values: list[object] = [row.seq, trade_id, text, row.record_hash, prev, row.chain_hash]
     if kind is not None:
