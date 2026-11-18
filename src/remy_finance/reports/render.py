@@ -251,8 +251,18 @@ def group_stats(
     group: str, items: Sequence[TradeOutcome], now: datetime, cutoff: date | None = None
 ) -> GroupStats:
     """With ``cutoff``, ``closed`` (and the scores, P&L and drawdown over it) is the EVAL-1
-    cohort: decided at least 61 days before ``cutoff``. Without it, all closed trades."""
-    closed = [o for o in items if o.closed_filled and (cutoff is None or o.eval1_eligible(cutoff))]
+    cohort (§1.4): decided at least 61 days before ``cutoff`` *and* closed by ``now``, the
+    analysis time, so a historical report never scores an outcome known only later (Codex
+    V05). Without ``cutoff``, every closed trade."""
+    closed = [
+        o
+        for o in items
+        if o.closed_filled
+        and (
+            cutoff is None
+            or (o.eval1_eligible(cutoff) and o.closed_at is not None and o.closed_at <= now)
+        )
+    ]
     filled = [o for o in items if o.filled]
     return GroupStats(
         group=group,
