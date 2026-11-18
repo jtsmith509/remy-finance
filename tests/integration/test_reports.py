@@ -153,7 +153,9 @@ def test_report_cli(built: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("REMY_DATA_DIR", str(built))
     runner = CliRunner()
     out = built / "reports" / "cumulative.md"
-    r = runner.invoke(cli.app, ["report", "cumulative", "--mode", "replay", "--out", str(out)])
+    r = runner.invoke(
+        cli.app, ["report", "cumulative", "--mode", "replay", "--no-closes", "--out", str(out)]
+    )
     assert r.exit_code == 0, r.output
     assert out.read_text().startswith("# Cumulative report: REPLAY")
     assert runner.invoke(cli.app, ["report", "trades", "--mode", "replay"]).exit_code == 0

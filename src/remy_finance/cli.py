@@ -671,14 +671,29 @@ def report_daily(
 
 
 @report_app.command("cumulative")
-def report_cumulative(mode: ModeOpt = "prospective", out: OutOpt = None) -> None:
-    """By baseline: fill rate, realized vs predicted, P&L, drawdown, scores, ranks."""
+def report_cumulative(
+    mode: ModeOpt = "prospective",
+    out: OutOpt = None,
+    closes: Annotated[
+        bool,
+        typer.Option(help="Score the underlying forecasts against ThetaData official closes."),
+    ] = True,
+) -> None:
+    """By baseline: fill rate, realized vs predicted, P&L, drawdown, scores, ranks, and
+    the underlying (S_T/F) forecast scores (EVAL-1 §2.2; needs the Theta Terminal)."""
     from datetime import UTC
 
     from remy_finance.reports.render import cumulative_report
+    from remy_finance.scheduler.runlog import RunLogStore
 
+    source = None
+    if closes:
+        from remy_finance.data.thetadata import ThetaDataSource
+
+        source = ThetaDataSource()
+    runs = RunLogStore(_data_dir() / "runs").all(_mode(mode))
     with _open_registry(mode) as reg:
-        _emit(cumulative_report(reg, datetime.now(UTC), _eval_commit()), out)
+        _emit(cumulative_report(reg, datetime.now(UTC), _eval_commit(), runs, source), out)
 
 
 @replay_app.command("run")

@@ -26,11 +26,13 @@ from decimal import Decimal
 
 from remy_finance.baselines.common import BaselineRun
 from remy_finance.core import Mode
+from remy_finance.data.protocol import OfficialCloseSource
 from remy_finance.data.timeutil import et_date
 from remy_finance.registry import EventKind, Registry
 from remy_finance.reports.bootstrap import cluster_bootstrap
 from remy_finance.reports.outcomes import EVAL1_CENSOR_DAYS, Status, TradeOutcome, outcomes
 from remy_finance.reports.scores import COVERAGE_LEVELS, Scores, score
+from remy_finance.reports.underlying import underlying_scores
 from remy_finance.snapshots.store import GapRecord
 
 E = EventKind
@@ -423,7 +425,66 @@ def _sensitivity(
     return lines
 
 
-def cumulative_report(registry: Registry, now: datetime, eval_commit: str) -> str:
+def _underlying_section(
+    runs: Sequence[BaselineRun], closes: OfficialCloseSource | None, now: datetime
+) -> list[str]:
+    lines = [
+        "",
+        "## Underlying forecasts (EVAL-1 §2.2; MKT-1's risk-neutral S_T/F; descriptive)",
+        "",
+    ]
+    if closes is None:
+        return [*lines, "Not computed: the report was run without an official-close source."]
+    res = underlying_scores(runs, closes, now)
+    cutoff = et_date(now)
+    rows: list[tuple[object, ...]] = []
+    groups = sorted({x.group for x in res.scores})
+    for g in groups:
+        for label, items in (
+            ("EVAL-1 cohort", [x for x in res.scores if x.group == g and x.eval1_eligible(cutoff)]),
+            ("operational (all)", [x for x in res.scores if x.group == g]),
+        ):
+            rows.append(
+                (
+                    g,
+                    label,
+                    len(items),
+                    len({(x.symbol, x.expiration) for x in items}),
+                    f"{statistics.fmean(x.crps for x in items):.5f}" if items else "-",
+                    cluster_bootstrap([x.crps for x in items], [x.expiration for x in items]).text(
+                        ".5f"
+                    )
+                    if items
+                    else "-",
+                    f"{statistics.fmean(x.log_score for x in items):.3f}" if items else "-",
+                )
+            )
+    if rows:
+        lines += _table(
+            ("engine", "cohort", "forecasts scored", "expirations", "mean CRPS (S_T/F)",
+             "CRPS 95% cluster-bootstrap interval", "mean log score"),
+            rows,
+        )  # fmt: skip
+    else:
+        lines += ["No forecast has a public official close yet."]
+    lines += [
+        "",
+        f"One forecast per fitted expiration per MKT-1 decision board (RAND-1 shares them). "
+        f"Not yet expired: {res.not_expired}; expired, close not yet public: {res.waiting}; "
+        f"close unavailable from the source: {res.unavailable}. The EVAL-1 cohort applies "
+        "§1.4 to the forecast's decision date. Risk premia make some miscalibration of a "
+        "risk-neutral density expected (§2.2).",
+    ]
+    return lines
+
+
+def cumulative_report(
+    registry: Registry,
+    now: datetime,
+    eval_commit: str,
+    runs: Sequence[BaselineRun] = (),
+    closes: OfficialCloseSource | None = None,
+) -> str:
     lines = header(registry, now, eval_commit).lines("Cumulative report")
     groups: dict[str, list[TradeOutcome]] = defaultdict(list)
     for o in outcomes(registry):
@@ -480,6 +541,7 @@ def cumulative_report(registry: Registry, now: datetime, eval_commit: str) -> st
     lines += ["", "## Forecast scores (EVAL-1 §2.1; EVAL-1 cohort; descriptive)", ""]
     lines += _forecast_section(cohort)
     lines += _sensitivity(groups, now, cutoff, "EVAL-1 cohort")
+    lines += _underlying_section([r for r in runs if r.mode is registry.mode], closes, now)
 
     lines += ["", "## By structure type", ""]
     eligible = {o.trade_id for c in cohort for o in c.closed}
