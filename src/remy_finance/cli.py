@@ -459,6 +459,31 @@ def registry_export(
     typer.echo(f"exported {len(rows)} new rows for {when}")
 
 
+@registry_app.command("annotate")
+def registry_annotate(
+    trade: Annotated[list[str], typer.Option(help="Trade ID; repeat for several trades.")],
+    defect: Annotated[str, typer.Option(help="Defect ID, e.g. V04")],
+    note: Annotated[str, typer.Option(help="What the defect is and how it affects the trade")],
+    mode: ModeOpt = "prospective",
+) -> None:
+    """Annotate trades affected by a known defect (EVAL-1 §1.7). Append-only: the trade
+    stays in every analysis, and reports add results without it. Re-running is a no-op."""
+    from datetime import UTC
+
+    from remy_finance.registry.notes import annotate, defect_note
+
+    text = defect_note(defect, note)
+    now = datetime.now(UTC)
+    with _open_registry(mode) as reg:
+        missing = [t for t in trade if reg.recommendation(t) is None]
+        if missing:
+            typer.echo(f"no such trade(s) in the {mode} registry: {', '.join(missing)}")
+            raise typer.Exit(1)
+        for t in trade:
+            ev = annotate(reg, t, text, now)
+            typer.echo(f"{t}: {'annotated' if ev else 'already annotated (nothing written)'}")
+
+
 @registry_app.command("backup")
 def registry_backup(mode: ModeOpt = "prospective") -> None:
     """Copy the registry to data/backup/ with SQLite's online backup (DR-0012)."""

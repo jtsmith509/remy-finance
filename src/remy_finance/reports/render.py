@@ -11,6 +11,8 @@ Rules (handoff R1.7; EVAL-1 §5 and §7):
   trades decided at least 61 days before the cutoff (§1.4). All-record results appear only
   in a separately labelled operational view (Codex R1.6 F04).
 - Mean CRPS carries the §4 cluster-bootstrap interval (descriptive; Codex R1.6 F08).
+- Trades annotated with a known defect stay in every result. Where any exist, the results
+  are repeated without them as a labelled sensitivity analysis (EVAL-1 §1.7).
 """
 
 from __future__ import annotations
@@ -133,6 +135,8 @@ def _flags(o: TradeOutcome) -> str:
         parts.append("pin risk")
     if o.corrections:
         parts.append(f"corrected x{o.corrections}")
+    if o.defects:
+        parts.append("known defect " + ", ".join(o.defects))
     return ", ".join(parts)
 
 
@@ -385,6 +389,40 @@ def _forecast_section(stats: Sequence[GroupStats]) -> list[str]:
     return lines
 
 
+def _sensitivity(
+    groups: dict[str, list[TradeOutcome]], now: datetime, cutoff: date | None, label: str
+) -> list[str]:
+    """EVAL-1 §1.7: the results above, repeated without trades annotated with a known
+    defect. Nothing is printed when no trade in scope carries one."""
+    flagged = sorted(
+        {(d, o.trade_id) for items in groups.values() for o in items for d in o.defects}
+    )
+    in_scope = {
+        o.trade_id
+        for g, items in groups.items()
+        for o in group_stats(g, items, now, cutoff).closed
+        if o.defects
+    }
+    if not flagged:
+        return ["", "**Known defects (EVAL-1 §1.7):** no trade is annotated with one."]
+    ids = ", ".join(
+        f"{d} ({sum(1 for x, _ in flagged if x == d)})" for d in sorted({d for d, _ in flagged})
+    )
+    lines = [
+        "",
+        f"**Sensitivity (EVAL-1 §1.7), {label}: without trades annotated with a known "
+        f"defect.** Annotated: {ids}; {len(in_scope)} of them closed and in scope here. "
+        "The results above include them.",
+        "",
+    ]
+    kept = {g: [o for o in items if not o.defects] for g, items in groups.items()}
+    without = [group_stats(g, kept[g], now, cutoff) for g in sorted(kept)]
+    lines += _realized_section(without)
+    lines += [""]
+    lines += _forecast_section(without)
+    return lines
+
+
 def cumulative_report(registry: Registry, now: datetime, eval_commit: str) -> str:
     lines = header(registry, now, eval_commit).lines("Cumulative report")
     groups: dict[str, list[TradeOutcome]] = defaultdict(list)
@@ -441,6 +479,7 @@ def cumulative_report(registry: Registry, now: datetime, eval_commit: str) -> st
 
     lines += ["", "## Forecast scores (EVAL-1 §2.1; EVAL-1 cohort; descriptive)", ""]
     lines += _forecast_section(cohort)
+    lines += _sensitivity(groups, now, cutoff, "EVAL-1 cohort")
 
     lines += ["", "## By structure type", ""]
     eligible = {o.trade_id for c in cohort for o in c.closed}
@@ -522,4 +561,5 @@ def cumulative_report(registry: Registry, now: datetime, eval_commit: str) -> st
     lines += _realized_section(stats)
     lines += ["", "**Forecast scores** (all closed trades):", ""]
     lines += _forecast_section(stats)
+    lines += _sensitivity(groups, now, None, "all closed trades")
     return "\n".join(lines) + "\n"

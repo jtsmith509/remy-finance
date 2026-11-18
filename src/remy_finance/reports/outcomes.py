@@ -17,6 +17,7 @@ from remy_finance.data.timeutil import et_date
 from remy_finance.execution.engine import ExitResult, SettlementResult
 from remy_finance.execution.fill import OrderFill
 from remy_finance.registry import EventKind, JournalEvent, Recommendation, Registry
+from remy_finance.registry.notes import defect_ids
 
 E = EventKind
 ZERO = Decimal(0)
@@ -46,6 +47,7 @@ class TradeOutcome:
     exit_retries: int
     pin_flags: int
     annotations: int
+    defects: tuple[str, ...] = ()  # known defects it is annotated with (EVAL-1 §1.7)
 
     # ------------------------------------------------------------------ derived
 
@@ -158,6 +160,7 @@ def outcome_of(rec: Recommendation, events: list[JournalEvent]) -> TradeOutcome:
         exit_retries=retries,
         pin_flags=pins,
         annotations=notes,
+        defects=defect_ids(events),
     )
 
 
