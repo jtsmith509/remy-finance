@@ -1,17 +1,18 @@
 # R1 result: registry, paper execution, baselines and the live run (Stop Point C)
 
 - **Stage:** R1 (handoff §6)
-- **Date:** drafted 2026-11-11; the live-run section is completed after the 5-day run (11–17 November 2026)
+- **Date:** 2026-11-18 (drafted 2026-11-11; the 5-day live run was 11–17 November 2026)
 - **Branch:** `claude/cool-pascal-80kptn`
 
-> **DRAFT.** Everything except §5 (the 5-day live run) and the final gate numbers is written from results already in hand. **TODO** marks the parts that wait for the live run.
+> **Two checks are still to run** on the Mac mini, because the data stays there: whether any live recommendation is a structure affected by Codex V04, and the run logs' bug-signal counts. Both are marked *Pending* (§4, §6); the command is in the handoff message.
 
 > **Status against the R1 definition of done (handoff §6):**
 > - **Replay month:** done. August 2026 ran end to end three times (MKT-1/RAND-1 v1, v2, v3). The replay registry passed `registry verify`, and the reports ran.
-> - **5-day live run:** in progress on the Mac mini since 2026-11-11, with no manual intervention. **TODO:** the result.
-> - **Sanity property:** shown. No MKT-1 v3 prediction on the 3 August board is above carry, and MKT-1 v3's picks predicted 0.0% on average (§4).
+> - **5-day live run:** done. Five consecutive sessions (11, 12, 13, 16 and 17 November) ran with **no manual intervention**: 20 of 20 snapshot slots stored, 0 gaps, 0 failures, five nightly exports pushed, and `registry verify --export-dir` OK (§5).
+> - **Sanity property:** shown, with one explained departure. MKT-1 v3's predictions are carry − (half-spreads + fees), as DR-0037 defines. Live picks therefore range from −0.2% to +0.4%, the positive ones being long-dated options whose carry exceeds their spread cost. All are far below the 5% bug-signal threshold (§4).
 > - **Decision records:** all written. DR-0028 to DR-0039 are accepted, and none are awaiting confirmation.
-> - **Independent review:** Codex found 16 defects at `b38b9b1`. 15 are fixed with regression tests; 1 (F09) is deferred to after the live run by Josh's decision. A check of the fixes is with Codex (`docs/review/R1-fixes-review-brief.md`).
+> - **Independent review:** Codex found 16 defects at `b38b9b1`; 15 are fixed, and F09 is deferred by Josh's decision. Codex's check of the fixes found 7 more (V01–V07), all now fixed (§6). Every fix has a regression test.
+> - **Gate:** ruff, format and mypy clean; **pytest 541 passed** (§2).
 
 ## 1. What was built
 
@@ -31,7 +32,7 @@
 
 ## 2. Test results (offline, no network)
 
-At the draft (commit `aa53762`): `ruff check`, `ruff format --check` and `mypy` are clean. **pytest: 515 passed** (309 at the R0 sign-off). CI runs the same gate on every push. **TODO:** re-run the gate for the final memo.
+At commit `c42d650` (after the V01–V07 fixes): `ruff check`, `ruff format --check` (198 files) and `mypy` (70 source files) are clean. **pytest: 541 passed** (515 at the live run's code `aa53762`; 309 at the R0 sign-off). CI runs the same gate on every push.
 
 | Area | Highlights |
 |---|---|
@@ -83,37 +84,62 @@ The power estimate's addenda (2026-11-10 and 2026-11-11) record the measured inp
 - **The 3 August 2026 open board (v3):** none of the 269,846 scored candidates predicts above zero in any structure (`replay diagnose`). The highest predictions are −0.1% to −0.2%: cheap wings, where the spread is small relative to capital at risk.
 - **MKT-1 v3's picks** predicted 0.0% on average over the month, which is SELECT-1 picking the candidates closest to carry. No bug signal was selected.
 - **History:** v1 violated the property, because fit errors produced positive predictions. That was fixed by anchoring each leg's mean at mid (DR-0037). Every live recommendation uses v3.
-- **TODO:** confirm on the live boards (the run logs' bug-signal counts and the predicted-return range per session).
+- **The live run (55 MKT-1 picks, 11–18 November):** predictions range from −0.2% to +0.4% (mean about +0.05%; 29 of 55 are positive). This is the one departure from the property as the handoff words it, and it is explained by carry:
+  - DR-0037 anchors each leg's expected payoff at its mid carried to expiration (mid ÷ DF). The prediction is therefore exactly (carry − half-spreads − fees) ÷ capital at risk.
+  - For a long option, carry is the risk-free rate on the premium paid. Up to 60 days at about 4% a year, that is up to about 0.65% of the premium, which can exceed the cost of a tight spread.
+  - SELECT-1 picks the highest predictions, so MKT-1 picks exactly those: 19 long calls and 24 long puts, plus 12 credit verticals.
+  - Every prediction stays below carry and far below the 5% bug-signal threshold. Bug signals are excluded from selection by construction.
+  - The handoff's wording (−(half-spreads + fees)) ignores carry. The August replay's picks averaged 0.0%.
+- **Pending:** the run logs' bug-signal counts per session (the check command in the handoff message).
 
-## 5. The 5-day live run (TODO)
+## 5. The 5-day live run (11–17 November 2026)
 
-- **Installed:** 2026-11-11 (launchd, `remy run tick` every minute). `remy doctor` was clean apart from the expected pre-start warnings.
 - **Install:** the first tick ran at 00:13 ET on Wednesday 11 November (05:13 UTC). Its nightly step exported 0 rows for 10 November and backed up the empty registry. The reconciliation watermark starts on 11 November.
-- **Sessions:** Wednesday 11 to Tuesday 17 November 2026 (11, 12, 13, 16 and 17 November): 5 sessions with 2 slots each, for 20 snapshot slots.
-- **Day 1, Wednesday 11 November** (from the scheduler log and `remy doctor`):
+- **No manual intervention:** the scheduler ran from launchd throughout. Nothing was pulled, restarted or edited, and no failure was recorded (`data/logs/failures/` never created).
+- **Sources:** the five daily logs, `remy report daily` for each session, `remy report cumulative` and `report trades` (generated 2026-11-18, after the next open), `remy doctor`, `remy registry verify --export-dir` and the `registry-export` history. The files stay on the Mac mini.
 
-| Step | OPEN | CLOSE |
+**Per session** (times ET; boards are stamped after the fetch):
+
+| Day | OPEN decision / execution | CLOSE decision / execution | Candidates (open, close) | Entry events (open, close) | Position events (open, close) |
+|---|---|---|---|---|---|
+| Wed 11 | 10:01:48 / 10:07:58 | 15:46:33 / 15:53:31 | 400,021, 404,654 | 21, 23 | 0, 0 |
+| Thu 12 | 10:01:34 / 10:08:35 | 15:46:26 / 15:52:42 | 419,607, 399,315 | 18, 21 | 1, 3 |
+| Fri 13 | 10:01:06 / 10:08:05 | 15:46:36 / 15:53:36 | 436,845, 431,578 | 23, 21 | 0, 0 |
+| Mon 16 | 10:01:22 / 10:07:54 | 15:46:12 / 15:52:10 | 416,473, 417,855 | 18, 21 | 1, 3 |
+| Tue 17 | 10:01:34 / 10:08:33 | 15:46:57 / 15:54:00 | 410,046, 423,706 | 21, 23 | 0, 0 |
+
+- **Slots:** 20 of 20 stored and 0 gaps. Every decision board was stamped 1–2 minutes after its scheduled time, and every execution board 6–7 minutes after its decision. All were well inside the 10-minute windows.
+- **Recommendations:** 10 per session (5 MKT-1, 5 RAND-1), so 100 in all. The step took about 40–60 s per board: movegen 25–39 s and scoring 10–20 s.
+- **Nightly steps (17:30 ET):** exports of 84, 83, 84, 83 and 84 rows, pushed as `registry-export` commits `ada8133`, `b8fb5f9`, `863c8a8`, `5450bff` and `6b1d97d`. A backup was written each night.
+- **Integrity:** `registry verify --export-dir` gives `registry OK`, with all 418 exported rows checked byte for byte; 418 equals the five nightly exports summed. `remy doctor` passes on every line. Every record names engine commit `aa53762`, the committed code.
+
+**Per day, from `report daily`:**
+
+| Day | MKT-1 filled legs / unfilled | RAND-1 filled legs / unfilled | RAND-1 assignments / exits filled / closed | P&L of trades closed |
+|---|---|---|---|---|
+| Wed 11 | 13 / 0 | 29 / 1 | 0 / 0 / 1 | $0.00 |
+| Thu 12 | 13 / 0 | 26 / 0 | 1 / 1 / 1 | −$691.80 |
+| Fri 13 | 16 / 0 | 26 / 1 | 0 / 0 / 1 | $0.00 |
+| Mon 16 | 10 / 0 | 25 / 2 | 1 / 1 / 3 | −$839.50 |
+| Tue 17 | 10 / 0 | 34 / 0 | 0 / 0 / 0 | $0.00 |
+
+**Cumulative** (110 recommendations, including the 18 November open, which ran as normal):
+
+| | MKT-1 v3 | RAND-1 v3 |
 |---|---|---|
-| Decision board stored (as_of, ET) | 10:01:48 | 15:46:33 |
-| Candidates; movegen / scoring time | 400,021; 26 s / 17 s | 404,654; 26 s / 10 s |
-| Recommendations | 10 | 10 |
-| Execution board stored (as_of, ET) | 10:07:58 | 15:53:31 |
-| Entry events | 21 | 23 |
-| Position events | 0 | 0 |
+| Recommended / filled | 55 / 54 (98.2%) | 55 / 51 (92.7%) |
+| Unfilled | 1, insufficient size (GLD long put, 18 November) | 4, insufficient size: SPY credit vertical, MU and XOM long iron condors, GLD long strangle |
+| Open / closed | 54 / 0 | 49 / 2 filled closed (plus the unfilled ones) |
+| Assignments / forced exits | 0 / 0 | 3 / 2 |
+| P&L of closed trades | $0.00 | −$1,531.30 |
+| EVAL-1 cohort | 0 trades (the first trades enter in January 2027) | 0 |
 
-  - **Daily report:** MKT-1 v3 filled 10 of 10 entries (13 legs). RAND-1 v3 filled 9 of 10 (29 legs); its 1 unfilled order closed the same day. 0 snapshot gaps. Every record names engine commit `aa53762`. The 44 entry events (13 + 29 legs, 1 unfilled, 1 close) match the log's 21 + 23.
-  - **Nightly step (17:30 ET):** exported 84 rows (`registry-export` commit `ada8133803bf`) and wrote the backup `prospective-20261111T223026Z.sqlite`.
-  - **`remy doctor` afterwards:** every line OK. The prospective registry holds 20 recommendations and 64 journal rows; the last snapshot is 2026-11-11 CLOSE, stored; no failures in 24 h; the code tree is clean.
-- **TODO, per day:**
-  - decision and execution snapshots stored, or gaps with reasons;
-  - capture timing;
-  - recommendations per baseline;
-  - fills and unfilled reasons;
-  - management events;
-  - failures and notifications;
-  - export commits on `registry-export`;
-  - backups.
-- **TODO:** `registry verify` on the prospective registry; the `report daily` and `report cumulative` summaries (operational view only, since no trade enters the 61-day EVAL-1 cohort until January); any manual intervention (target: none).
+- **The machinery under live data:** ASSIGN-1 fired three times on RAND-1's short legs: a UNH put butterfly, an UBER credit vertical, and an AMZN credit vertical still open. The forced closes filled at the next execution quote.
+- **The two closed trades:**
+  - UNH: −39.9% realized against −96.5% predicted.
+  - UBER: −136.9% realized against −77.0% predicted. It lands below −100% because returns are measured on decision-price capital at risk (§3, §7).
+- **Machinery checks only:** the operational view's forecast scores (2 trades) are not EVAL-1 results.
+- **Conclusion:** the R1 definition of done ("at least 5 consecutive trading days on the Mac mini with no manual intervention, gaps recorded correctly") is met. The scheduler keeps running, adding to the prospective record that EVAL-1's first confirmatory analysis uses at 12 months.
 
 ## 6. Independent review (Codex, at `b38b9b1`)
 
@@ -125,7 +151,8 @@ The power estimate's addenda (2026-11-10 and 2026-11-11) record the measured inp
 
 - **Regression tests:** every fix has one (`tests/unit/review/test_codex_r1_*.py`).
 - **The open finding:** **F09**, EVAL-1 §2.2 scoring of the underlying S_T/F forecasts. Josh deferred it to after the live run (2026-11-11). The persisted `rn_quantiles` are the input; no live expiration needs it before the first scored cohort.
-- **The fix check** (Codex, at `aa53762`, 2026-11-11): 9 of the 15 fixes are closed and 6 partly closed, with 7 new findings (V01–V07: one high, five medium, one low). None affects the live run (`docs/review/R1-fixes-findings.md`). **TODO:** the fixes, applied after the run.
+- **The fix check** (Codex, at `aa53762`, 2026-11-11): 9 of the 15 fixes closed and 6 partly closed, with 7 new findings (V01–V07: one high, five medium, one low). None affected the live run. All 7 were fixed on 2026-11-18 (`a3aefe8`, `a493978`, `e5b7146`, `c42d650`). Codex's probes are the regression tests (`tests/unit/review/test_codex_r1_verify_*.py`): 9 fail at `aa53762` and pass on the fix (`docs/review/R1-fixes-findings.md`).
+- **Pending:** V04 changed MKT-1 only for structures that can only lose (an executable debit above the width). The check command lists any such live recommendation; MKT-1 can't pick one, RAND-1 could. If any are found, they're annotated in the journal, never edited.
 
 ## 7. Known limitations
 
@@ -134,7 +161,7 @@ The power estimate's addenda (2026-11-10 and 2026-11-11) record the measured inp
 - **Calibration is distorted** by the decision-price denominator and the lack of a slippage model (§3). Both are as EVAL-1 specifies; changing them is an EVAL-2 question.
 - **The American early-exercise premium is ignored** in MKT-1's implied volatilities (handoff R1.4); every recommendation is flagged.
 - **Expirations that fail the fit are skipped,** not repaired: 56 of 376 on 3 August, of which 28 were negative densities and 26 were poor or failed fits.
-- **Fills are all-or-none at the displayed size.** RAND-1 lost 21% of its entries to insufficient size, mostly on four-leg structures.
+- **Fills are all-or-none at the displayed size.** RAND-1 lost 21% of its entries to insufficient size in the replay and 7% live, mostly on four-leg structures.
 - **Option volume is end-of-day, prior session only.** There are no intraday signals.
 - **The R0 limitations still apply:** survivorship bias in the candidate list; ASSIGN-1 near the money; the strike lattice; ETF dividends announced only on the ex-date.
 - **The Mac must stay awake,** and Theta Terminal must stay running. A sleeping Mac produces gaps, which are recorded correctly but lose observations.
@@ -150,11 +177,12 @@ The power estimate's addenda (2026-11-10 and 2026-11-11) record the measured inp
   - The mean is anchored at mid (DR-0037).
   - MOVEGEN-2 is the default (DR-0035).
   - Boards carry held names (DR-0039).
-- **TODO:** any DR arising from the live run or the fix check.
+- **No new DR** arises from the live run or the fix check. The fixes implement existing decisions. None are awaiting confirmation.
 
 ## 9. Questions for Josh at Stop Point C (draft)
 
 1. **F09:** build the EVAL-1 §2.2 underlying scores now that the live run is done, before starting R2?
 2. **Calibration denominator:** should EVAL-2 also score returns on *execution-price* capital at risk, alongside the frozen decision-price measure, so that slippage stops dominating the tail metrics? EVAL-1 itself stays frozen.
-3. **The live run's own questions:** **TODO.**
-4. **Close Stop Point C** and begin R2?
+3. **Carry in MKT-1's predictions (§4):** accept the explanation (predictions are carry − costs, by DR-0037, so up to +0.4% on long-dated options with tight spreads)? Or record now, for R2, that rankings should use the return in excess of the risk-free rate? EVAL-1 is unaffected either way.
+4. **Pulling the fixes onto the Mac mini:** the V01–V07 fixes change the code commit recorded on new recommendations (engine versions stay v3, since no forecast of a feasible candidate changes). Pull them now, in the evening after the 17:30 ET export, or hold the Mac on `aa53762` until R2?
+5. **Close Stop Point C** and begin R2?

@@ -28,17 +28,19 @@ None of V01–V07 needs the live run to stop or the code to change mid-run.
 
 ## Resolution
 
-**Fixes are applied after the live run (last session Tuesday 17 November)** (Josh, 2026-11-11: no code changes during it), each with Codex's probe as its regression test.
+**All seven were fixed on 2026-11-18,** after the live run ended (Josh, 2026-11-11: no code changes during it). Codex's four probe files are the regression tests (`tests/unit/review/test_codex_r1_verify_*.py`): **9 fail at `aa53762` and all 26 pass on the fix.** Gate: ruff, format and mypy clean; pytest **541 passed**. Three probes were adapted because the fix changed what they could observe:
+- **V04:** the guaranteed-loss spread is now skipped as infeasible, so the probe finds it among the generated candidates, not the scored ones. It then checks the skip, the flag, and that every scored forecast stays within its true bounds.
+- **V06:** the watermark is now replaced atomically, so the probe's truncate-the-file injection can't happen. One test crashes at the rename instead, and the old watermark must survive. A second test checks that an already malformed watermark is recovered from the scheduler markers.
 
 | # | Finding | Planned fix | Commit |
 |---|---|---|---|
-| V01 | Pre-fix journal export lines (no `kind`) fail verification | Accept exactly the pre-fix line format (the current line minus `kind`) for journal rows, still checking the SQL kind against the event. Historical bytes are never rewritten. | after the run |
-| V02 | Symlink aliases bypass the export lock | Name the lock from the resolved export directory | after the run |
-| V03 | Verification's database snapshot races a newer export file | `verify(export_dir=…)` takes the export lock before its read snapshot; the caller can say it already holds it | after the run |
-| V04 | `return_bounds` uses the clamped `max_gain` | Endpoints from signed `payoff_extremes` minus fees over capital at risk; an infeasible mean is then skipped and counted | after the run |
-| V05 | The cohort doesn't require closure before the cutoff | Cohort = decided ≥ 61 days before the cutoff **and** closed at or before the report time | after the run |
-| V06 | An interrupted watermark write stops reconciliation for good | Atomic write (temporary file, fsync, replace). A malformed watermark is recovered from the earliest scheduler marker, never by backfilling captures | after the run |
-| V07 | The appended `Row` lacks its kind | `_insert` passes `kind` into the returned `Row` | after the run |
+| V01 | Pre-fix journal export lines (no `kind`) fail verification | Accept exactly the pre-fix line format (the current line minus `kind`) for journal rows, still checking the SQL kind against the event. Historical bytes are never rewritten. | `a3aefe8` |
+| V02 | Symlink aliases bypass the export lock | Name the lock from the resolved export directory | `a3aefe8` |
+| V03 | Verification's database snapshot races a newer export file | `verify(export_dir=…)` takes the export lock before its read snapshot; the caller can say it already holds it | `a3aefe8` |
+| V04 | `return_bounds` uses the clamped `max_gain` | Endpoints from signed `payoff_extremes` minus fees over capital at risk; an infeasible mean is then skipped and counted | `a493978` |
+| V05 | The cohort doesn't require closure before the cutoff | Cohort = decided ≥ 61 days before the cutoff **and** closed at or before the report time | `e5b7146` |
+| V06 | An interrupted watermark write stops reconciliation for good | Atomic write (temporary file, fsync, replace). A malformed watermark is recovered from the earliest scheduler marker, never by backfilling captures | `c42d650` |
+| V07 | The appended `Row` lacks its kind | `_insert` passes `kind` into the returned `Row` | `a3aefe8` |
 
 ---
 
