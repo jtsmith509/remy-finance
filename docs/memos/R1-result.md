@@ -1,7 +1,7 @@
 # R1 result: registry, paper execution, baselines and the live run (Stop Point C)
 
 - **Stage:** R1 (handoff §6)
-- **Date:** 2026-11-18 (drafted 2026-11-11; the 5-day live run was 11–17 November 2026)
+- **Date:** 2026-11-18 (drafted 2026-11-11; the 5-day live run was 11–17 November 2026). Updated the same day with Josh's Stop Point C decisions (§9) and the R1 extras they added (§10).
 - **Branch:** `claude/cool-pascal-80kptn`
 
 > **Checks on the Mac (2026-11-18):** 0 bug signals. 3 of the 110 live recommendations (all RAND-1) have forecasts whose upper quantiles exceed the attainable maximum (Codex V04, §6); they are to be annotated.
@@ -10,9 +10,9 @@
 > - **Replay month:** done. August 2026 ran end to end three times (MKT-1/RAND-1 v1, v2, v3). The replay registry passed `registry verify`, and the reports ran.
 > - **5-day live run:** done. Five consecutive sessions (11, 12, 13, 16 and 17 November) ran with **no manual intervention**: 20 of 20 snapshot slots stored, 0 gaps, 0 failures, five nightly exports pushed, and `registry verify --export-dir` OK (§5).
 > - **Sanity property:** shown, with one explained departure. MKT-1 v3's predictions are carry − (half-spreads + fees), as DR-0037 defines. Live picks therefore range from −0.2% to +0.4%, the positive ones being long-dated options whose carry exceeds their spread cost. All are far below the 5% bug-signal threshold (§4).
-> - **Decision records:** all written. DR-0028 to DR-0039 are accepted, and none are awaiting confirmation.
-> - **Independent review:** Codex found 16 defects at `b38b9b1`; 15 are fixed, and F09 is deferred by Josh's decision. Codex's check of the fixes found 7 more (V01–V07), all now fixed (§6). Every fix has a regression test.
-> - **Gate:** ruff, format and mypy clean; **pytest 541 passed** (§2).
+> - **Decision records:** DR-0028 to DR-0039 accepted. **DR-0040 to DR-0042 proposed** (2026-11-18, from the Stop Point C decisions), awaiting confirmation.
+> - **Independent review:** Codex found 16 defects at `b38b9b1`, all now fixed (F09 on 2026-11-18). Codex's check of the fixes found 7 more (V01–V07), all fixed (§6). Every fix has a regression test.
+> - **Gate:** ruff, format and mypy clean; **pytest 549 passed** (§2).
 
 ## 1. What was built
 
@@ -32,7 +32,7 @@
 
 ## 2. Test results (offline, no network)
 
-At commit `c42d650` (after the V01–V07 fixes): `ruff check`, `ruff format --check` (198 files) and `mypy` (70 source files) are clean. **pytest: 541 passed** (515 at the live run's code `aa53762`; 309 at the R0 sign-off). CI runs the same gate on every push.
+At commit `f6c94a6` (after the V01–V07 fixes, the annotate command and F09): `ruff check`, `ruff format --check` (205 files) and `mypy` (72 source files) are clean. **pytest: 549 passed** (515 at the live run's code `aa53762`; 309 at the R0 sign-off). CI runs the same gate on every push.
 
 | Area | Highlights |
 |---|---|
@@ -150,7 +150,7 @@ The power estimate's addenda (2026-11-10 and 2026-11-11) record the measured inp
 | R1.6–R1.8 scheduler and reports | 9 (4 high) | 8 | `docs/review/R1.6-R1.8-findings.md` |
 
 - **Regression tests:** every fix has one (`tests/unit/review/test_codex_r1_*.py`).
-- **The open finding:** **F09**, EVAL-1 §2.2 scoring of the underlying S_T/F forecasts. Josh deferred it to after the live run (2026-11-11). The persisted `rn_quantiles` are the input; no live expiration needs it before the first scored cohort.
+- **F09** (EVAL-1 §2.2 scoring of the underlying S_T/F forecasts): Josh deferred it to after the live run (2026-11-11), and it was built on 2026-11-18 (`f6c94a6`, DR-0040).
 - **The fix check** (Codex, at `aa53762`, 2026-11-11): 9 of the 15 fixes closed and 6 partly closed, with 7 new findings (V01–V07: one high, five medium, one low). None affected the live run. All 7 were fixed on 2026-11-18 (`a3aefe8`, `a493978`, `e5b7146`, `c42d650`). Codex's probes are the regression tests (`tests/unit/review/test_codex_r1_verify_*.py`): 9 fail at `aa53762` and pass on the fix (`docs/review/R1-fixes-findings.md`).
 - **V04 exposure (checked on the Mac, 2026-11-18):** 4 of the 110 live recommendations can only lose, all picked by RAND-1, none by MKT-1:
 
@@ -161,7 +161,7 @@ The power estimate's addenda (2026-11-10 and 2026-11-11) record the measured inp
   | 17 Nov | IRON_CONDOR (SMH) | `T-4b067e2f3855e90317373293` |
   | 18 Nov | LONG_IRON_CONDOR (TSM) | `T-77e55cad8f9b504e273e4fc0` |
 
-  The two short iron condors cost money to open at executable prices: selling at the bid and buying at the ask gave a net debit.
+  At executable prices (selling at the bid, buying at the ask) plus fees, even the best outcome of each is a loss. For the two short iron condors, the credit received doesn't cover the fees and the cost of the long wings.
 
   **Forecasts against the attainable maximum** (checked on the Mac, 2026-11-18):
 
@@ -200,14 +200,35 @@ The power estimate's addenda (2026-11-10 and 2026-11-11) record the measured inp
   - The mean is anchored at mid (DR-0037).
   - MOVEGEN-2 is the default (DR-0035).
   - Boards carry held names (DR-0039).
-- **No new DR** arises from the live run or the fix check. The fixes implement existing decisions. None are awaiting confirmation.
+- **Proposed at Stop Point C (2026-11-18), awaiting confirmation:**
+  - DR-0040: the F09 scoring details;
+  - DR-0041: exclude candidates that can only lose, from R2;
+  - DR-0042: rank on return in excess of the risk-free rate, from R2.
 
-## 9. Questions for Josh at Stop Point C (draft)
+## 9. Decisions at Stop Point C (Josh, 2026-11-18)
 
-1. **F09:** build the EVAL-1 §2.2 underlying scores now that the live run is done, before starting R2?
-2. **Calibration denominator:** should EVAL-2 also score returns on *execution-price* capital at risk, alongside the frozen decision-price measure, so that slippage stops dominating the tail metrics? EVAL-1 itself stays frozen.
-3. **Carry in MKT-1's predictions (§4):** accept the explanation (predictions are carry − costs, by DR-0037, so up to +0.4% on long-dated options with tight spreads)? Or record now, for R2, that rankings should use the return in excess of the risk-free rate? EVAL-1 is unaffected either way.
-4. **Pulling the fixes onto the Mac mini:** the V01–V07 fixes change the code commit recorded on new recommendations (engine versions stay v3, since no forecast of a feasible candidate changes). Pull them now, in the evening after the 17:30 ET export, or hold the Mac on `aa53762` until R2?
-5. **Candidates that can only lose:** 4 of RAND-1's 55 live picks can't make money at executable prices. They are dominated by the null move. Should a new DR make MOVEGEN or the eligibility rule exclude them? That would change RAND-1's sampling population, so it would take effect at R2 with a version bump.
-6. **Annotating the 3 affected trades (§6):** add a small `remy registry annotate` command and record an ANNOTATION on each (EVAL-1 §1.7: the trade stays in, and results are reported with and without it)?
-7. **Close Stop Point C** and begin R2?
+| # | Question | Decision |
+|---|---|---|
+| 1 | F09 underlying scores | **Build now, before R2.** Done (§10). |
+| 2 | Calibration denominator | **Add to EVAL-2, alongside EVAL-1:** returns on execution-price capital at risk as a labelled second measure. The frozen EVAL-1 measure stays primary. Drafted with R2. |
+| 3 | Carry in MKT-1's predictions | **Accept the explanation for R1; from R2, rank on excess return** (DR-0042, proposed). MKT-1 v3 is unchanged. |
+| 4 | Pulling the V01–V07 fixes onto the Mac | **Pull tonight, after the 17:30 ET export.** |
+| 5 | Candidates that can only lose | **Exclude from R2, via a new DR** (DR-0041, proposed). R1's v3 records stay as recorded. |
+| 6 | The 3 affected forecasts | **Add an annotate command and annotate all 3.** Reports flag them and show results without them. Done in code (§10); the 3 annotations are written on the Mac after the pull. |
+| 7 | When Stop Point C closes | **After the R1 extras:** built, tested, recorded here, then Josh's confirmation. |
+
+## 10. R1 extras added at Stop Point C (2026-11-18)
+
+- **Known-defect annotations** (`f1c98c2`; EVAL-1 §1.7):
+  - `remy registry annotate --trade T --defect ID --note TEXT` appends an `ANNOTATION` whose note starts `DEFECT <ID>:`. It is append-only, hash-chained and exported. Re-running it writes nothing.
+  - `report trades` flags each annotated trade.
+  - `report cumulative` repeats the EVAL-1-cohort and operational results without annotated trades, as a labelled sensitivity analysis.
+- **F09, underlying forecast scores** (`f6c94a6`; DR-0040):
+  - `report cumulative` scores every MKT-1 fit's S_T/F quantiles against the public official close, by CRPS and a quantile-grid log score, in the EVAL-1 cohort and the operational view, with the cluster bootstrap.
+  - It reads closes from ThetaData; `--no-closes` skips the section.
+- **Tests:** 8 new (4 for annotations, 4 for F09), and the full gate passes (§2).
+- **Not built (R2):** EVAL-2's execution-price measure, DR-0041's eligibility rule and DR-0042's ranking key.
+- **On the Mac, after the pull:**
+  - the 3 V04 annotations (`T-cb1617862c81df3cad3b403c`, `T-4b067e2f3855e90317373293`, `T-77e55cad8f9b504e273e4fc0`);
+  - one `report cumulative` with closes, to confirm the F09 section runs against the live run logs.
+  - **Pending.**
