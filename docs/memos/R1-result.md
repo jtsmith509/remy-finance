@@ -4,7 +4,7 @@
 - **Date:** 2026-11-18 (drafted 2026-11-11; the 5-day live run was 11–17 November 2026)
 - **Branch:** `claude/cool-pascal-80kptn`
 
-> **One check is still to run** on the Mac mini: whether the 4 live recommendations that can only lose have forecasts above their attainable maximum (Codex V04, §6). The bug-signal count is done: 0.
+> **Checks on the Mac (2026-11-18):** 0 bug signals. 3 of the 110 live recommendations (all RAND-1) have forecasts whose upper quantiles exceed the attainable maximum (Codex V04, §6); they are to be annotated.
 
 > **Status against the R1 definition of done (handoff §6):**
 > - **Replay month:** done. August 2026 ran end to end three times (MKT-1/RAND-1 v1, v2, v3). The replay registry passed `registry verify`, and the reports ran.
@@ -161,7 +161,21 @@ The power estimate's addenda (2026-11-10 and 2026-11-11) record the measured inp
   | 17 Nov | IRON_CONDOR (SMH) | `T-4b067e2f3855e90317373293` |
   | 18 Nov | LONG_IRON_CONDOR (TSM) | `T-77e55cad8f9b504e273e4fc0` |
 
-  The two short iron condors cost money to open at executable prices: selling at the bid and buying at the ask gave a net debit. **Pending:** whether their recorded forecasts actually exceed the attainable maximum (the second check command). Any affected trade stays in and is annotated in the journal, never edited, under EVAL-1 §1.7.
+  The two short iron condors cost money to open at executable prices: selling at the bid and buying at the ask gave a net debit.
+
+  **Forecasts against the attainable maximum** (checked on the Mac, 2026-11-18):
+
+  | Trade | Best attainable return | Recorded mean | Recorded top quantile | Affected? |
+  |---|---|---|---|---|
+  | `T-2003e1884e5cc367a87d951c` | −23.69% | −48.80% | −25.64% | no |
+  | `T-cb1617862c81df3cad3b403c` | −49.81% | −58.71% | −42.18% | **yes**, by 7.6 points |
+  | `T-4b067e2f3855e90317373293` | −11.47% | −16.30% | −9.73% | **yes**, by 1.7 points |
+  | `T-77e55cad8f9b504e273e4fc0` | −9.52% | −42.28% | −8.95% | **yes**, by 0.6 points |
+
+  - **Three forecasts are affected.** Their upper quantiles extend above anything the trade can return.
+  - **Their means are right.** Each recorded mean is below the attainable best, so the fixed code would have scored them too, with the upper tail capped.
+  - **Effect on EVAL-1:** CRPS is slightly off, and these trades can never exceed their upper quantiles, which biases the upper-coverage counts.
+  - **What happens to them:** under EVAL-1 §1.7 they stay in and are annotated in the journal, never edited (question 6). Results are then reported with and without them.
 
 ## 7. Known limitations
 
@@ -195,5 +209,5 @@ The power estimate's addenda (2026-11-10 and 2026-11-11) record the measured inp
 3. **Carry in MKT-1's predictions (§4):** accept the explanation (predictions are carry − costs, by DR-0037, so up to +0.4% on long-dated options with tight spreads)? Or record now, for R2, that rankings should use the return in excess of the risk-free rate? EVAL-1 is unaffected either way.
 4. **Pulling the fixes onto the Mac mini:** the V01–V07 fixes change the code commit recorded on new recommendations (engine versions stay v3, since no forecast of a feasible candidate changes). Pull them now, in the evening after the 17:30 ET export, or hold the Mac on `aa53762` until R2?
 5. **Candidates that can only lose:** 4 of RAND-1's 55 live picks can't make money at executable prices. They are dominated by the null move. Should a new DR make MOVEGEN or the eligibility rule exclude them? That would change RAND-1's sampling population, so it would take effect at R2 with a version bump.
-6. **Annotating affected trades:** if the second check shows any forecast above its attainable maximum, add a small `remy registry annotate` command and record an ANNOTATION on each (EVAL-1 §1.7: the trade stays in, and results are reported with and without it)?
+6. **Annotating the 3 affected trades (§6):** add a small `remy registry annotate` command and record an ANNOTATION on each (EVAL-1 §1.7: the trade stays in, and results are reported with and without it)?
 7. **Close Stop Point C** and begin R2?
