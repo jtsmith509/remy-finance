@@ -4,7 +4,7 @@
 - **Date:** 2026-11-18 (drafted 2026-11-11; the 5-day live run was 11–17 November 2026)
 - **Branch:** `claude/cool-pascal-80kptn`
 
-> **Two checks are still to run** on the Mac mini, because the data stays there: whether any live recommendation is a structure affected by Codex V04, and the run logs' bug-signal counts. Both are marked *Pending* (§4, §6); the command is in the handoff message.
+> **One check is still to run** on the Mac mini: whether the 4 live recommendations that can only lose have forecasts above their attainable maximum (Codex V04, §6). The bug-signal count is done: 0.
 
 > **Status against the R1 definition of done (handoff §6):**
 > - **Replay month:** done. August 2026 ran end to end three times (MKT-1/RAND-1 v1, v2, v3). The replay registry passed `registry verify`, and the reports ran.
@@ -90,7 +90,7 @@ The power estimate's addenda (2026-11-10 and 2026-11-11) record the measured inp
   - SELECT-1 picks the highest predictions, so MKT-1 picks exactly those: 19 long calls and 24 long puts, plus 12 credit verticals.
   - Every prediction stays below carry and far below the 5% bug-signal threshold. Bug signals are excluded from selection by construction.
   - The handoff's wording (−(half-spreads + fees)) ignores carry. The August replay's picks averaged 0.0%.
-- **Pending:** the run logs' bug-signal counts per session (the check command in the handoff message).
+- **Bug signals (checked on the Mac, 2026-11-18):** **0** over all 22 run logs (11 decision boards × 2 baselines, 11–18 November). No candidate predicted above 5%.
 
 ## 5. The 5-day live run (11–17 November 2026)
 
@@ -152,7 +152,16 @@ The power estimate's addenda (2026-11-10 and 2026-11-11) record the measured inp
 - **Regression tests:** every fix has one (`tests/unit/review/test_codex_r1_*.py`).
 - **The open finding:** **F09**, EVAL-1 §2.2 scoring of the underlying S_T/F forecasts. Josh deferred it to after the live run (2026-11-11). The persisted `rn_quantiles` are the input; no live expiration needs it before the first scored cohort.
 - **The fix check** (Codex, at `aa53762`, 2026-11-11): 9 of the 15 fixes closed and 6 partly closed, with 7 new findings (V01–V07: one high, five medium, one low). None affected the live run. All 7 were fixed on 2026-11-18 (`a3aefe8`, `a493978`, `e5b7146`, `c42d650`). Codex's probes are the regression tests (`tests/unit/review/test_codex_r1_verify_*.py`): 9 fail at `aa53762` and pass on the fix (`docs/review/R1-fixes-findings.md`).
-- **Pending:** V04 changed MKT-1 only for structures that can only lose (an executable debit above the width). The check command lists any such live recommendation; MKT-1 can't pick one, RAND-1 could. If any are found, they're annotated in the journal, never edited.
+- **V04 exposure (checked on the Mac, 2026-11-18):** 4 of the 110 live recommendations can only lose, all picked by RAND-1, none by MKT-1:
+
+  | Decided | Structure | Trade |
+  |---|---|---|
+  | 13 Nov | LONG_IRON_CONDOR | `T-2003e1884e5cc367a87d951c` |
+  | 17 Nov | IRON_CONDOR (META) | `T-cb1617862c81df3cad3b403c` |
+  | 17 Nov | IRON_CONDOR (SMH) | `T-4b067e2f3855e90317373293` |
+  | 18 Nov | LONG_IRON_CONDOR (TSM) | `T-77e55cad8f9b504e273e4fc0` |
+
+  The two short iron condors cost money to open at executable prices: selling at the bid and buying at the ask gave a net debit. **Pending:** whether their recorded forecasts actually exceed the attainable maximum (the second check command). Any affected trade stays in and is annotated in the journal, never edited, under EVAL-1 §1.7.
 
 ## 7. Known limitations
 
@@ -185,4 +194,6 @@ The power estimate's addenda (2026-11-10 and 2026-11-11) record the measured inp
 2. **Calibration denominator:** should EVAL-2 also score returns on *execution-price* capital at risk, alongside the frozen decision-price measure, so that slippage stops dominating the tail metrics? EVAL-1 itself stays frozen.
 3. **Carry in MKT-1's predictions (§4):** accept the explanation (predictions are carry − costs, by DR-0037, so up to +0.4% on long-dated options with tight spreads)? Or record now, for R2, that rankings should use the return in excess of the risk-free rate? EVAL-1 is unaffected either way.
 4. **Pulling the fixes onto the Mac mini:** the V01–V07 fixes change the code commit recorded on new recommendations (engine versions stay v3, since no forecast of a feasible candidate changes). Pull them now, in the evening after the 17:30 ET export, or hold the Mac on `aa53762` until R2?
-5. **Close Stop Point C** and begin R2?
+5. **Candidates that can only lose:** 4 of RAND-1's 55 live picks can't make money at executable prices. They are dominated by the null move. Should a new DR make MOVEGEN or the eligibility rule exclude them? That would change RAND-1's sampling population, so it would take effect at R2 with a version bump.
+6. **Annotating affected trades:** if the second check shows any forecast above its attainable maximum, add a small `remy registry annotate` command and record an ANNOTATION on each (EVAL-1 §1.7: the trade stays in, and results are reported with and without it)?
+7. **Close Stop Point C** and begin R2?
