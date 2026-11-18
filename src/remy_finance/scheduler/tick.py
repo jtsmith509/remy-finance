@@ -22,6 +22,7 @@ carries on with the steps that don't depend on it.
 from __future__ import annotations
 
 import fcntl
+import os
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
@@ -51,6 +52,21 @@ from remy_finance.snapshots.store import (
 )
 
 EXECUTION_DELAY = timedelta(minutes=5)
+
+
+def _replace_text(path: Path, text: str) -> None:
+    """Replace ``path`` atomically: a temporary file in the same directory is written and
+    fsynced, then renamed over it. A crash leaves the old or the new content, never a
+    partial file (Codex V06)."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    with tmp.open("w", encoding="utf-8") as fh:
+        fh.write(text)
+        fh.flush()
+        os.fsync(fh.fileno())
+    os.replace(tmp, path)
+
+
 NIGHTLY_HHMM = (17, 30)
 
 
@@ -198,16 +214,31 @@ class Tick:
         managed at the next live board."""
         path = self.data_dir / "scheduler" / "watermark"
         if not path.exists():
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(today.isoformat() + "\n", encoding="utf-8")
+            _replace_text(path, today.isoformat() + "\n")
             return
-        day = date.fromisoformat(path.read_text(encoding="utf-8").strip())
+        day = self._read_watermark(path, today)
         while day < today:
             if is_session(day):
                 for session in (Session.OPEN, Session.CLOSE):
                     self._late_session(day, session)
             day = next_session(day)
-            path.write_text(min(day, today).isoformat() + "\n", encoding="utf-8")
+            _replace_text(path, min(day, today).isoformat() + "\n")
+
+    def _read_watermark(self, path: Path, today: date) -> date:
+        """The watermark, or, if it is unreadable (Codex V06: e.g. from a crash before
+        atomic writes), the earliest day with a scheduler marker: every day since the
+        scheduler started is then re-checked. Days already done are skipped by their
+        markers, and nothing is captured or recommended late, so re-checking is safe."""
+        try:
+            return date.fromisoformat(path.read_text(encoding="utf-8").strip())
+        except ValueError:
+            days = [
+                date.fromisoformat(m.name[:10]) for m in self.markers.root.glob("????-??-??-*.done")
+            ]
+            day = min(days, default=today)
+            self.log(f"watermark unreadable: recovered as {day} from the scheduler markers")
+            _replace_text(path, day.isoformat() + "\n")
+            return day
 
     def _late_session(self, day: date, session: Session) -> None:
         key = session.value.lower()
