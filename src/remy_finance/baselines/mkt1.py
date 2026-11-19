@@ -357,18 +357,22 @@ class InfeasibleMean(ValueError):
 
 
 def return_bounds(c: Candidate) -> tuple[float, float]:
-    """The structure's attainable net returns on capital at risk: -1 (losing all capital
-    at risk) to the best terminal P&L net of fees (inf when the upside is unbounded).
+    """The structure's attainable net returns on capital at risk: the worst and best
+    terminal P&L net of fees, over capital at risk (the best is inf when the upside is
+    unbounded).
 
-    The best P&L is the *signed* maximum of the payoff net of premium, not ``max_gain``,
-    which is floored at zero: a spread whose executable debit exceeds its width can only
-    lose, and its upper bound is negative (Codex V04)."""
+    Both ends use the *signed* payoff extremes, not ``max_loss``/``max_gain``, which are
+    floored at zero (Codex V04, X01). A spread whose executable debit exceeds its width can
+    only lose, so its upper bound is negative; a structure that can only win (possible
+    only with inconsistent quotes) has a lower bound above -1. For every other structure
+    the lower bound is exactly -1, since capital at risk is max loss plus fees."""
     s = c.structure
     assert s is not None
-    car = float(s.capital_at_risk)
-    _low, high = payoff_extremes(s.legs, s.net_premium)
-    best = math.inf if high is None else float(high - s.entry_fees - s.exit_fees) / car
-    return -1.0, best
+    low, high = payoff_extremes(s.legs, s.net_premium)
+    fees = s.entry_fees + s.exit_fees
+    worst = float((low - fees) / s.capital_at_risk)
+    best = math.inf if high is None else float((high - fees) / s.capital_at_risk)
+    return worst, best
 
 
 def shift_to_mean(
@@ -588,6 +592,7 @@ def run_mkt1(
         )
     shortfall = shortfall_note(len(recs), cfg.selection.k, score, excluded_underlyings)
     run = BaselineRun(
+        code_commit=code_commit,
         engine=cfg.version,
         engine_version=cfg.engine_version,
         artifact_hash=artifact,
