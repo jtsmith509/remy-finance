@@ -106,6 +106,7 @@ def run_rand1(
             )
         )
     run = BaselineRun(
+        code_commit=code_commit,
         engine=cfg.version,
         engine_version=cfg.engine_version,
         artifact_hash=artifact,

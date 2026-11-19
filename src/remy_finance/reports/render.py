@@ -44,13 +44,12 @@ class Header:
     generated_at: datetime
     eval_commit: str
     heads: dict[str, tuple[int, str]]
-    engines: tuple[tuple[str, str, str, int], ...] = ()  # (engine, version, commit, n)
+    # (engine, version, code commit or None if not recorded, records, run logs)
+    engines: tuple[tuple[str, str, str | None, int, int], ...] = ()
 
     def lines(self, title: str) -> list[str]:
         rows = "; ".join(f"{t} {n} rows, head {h[:12]}" for t, (n, h) in self.heads.items())
-        engines = (
-            "; ".join(f"{e} v{v} at `{c}` ({n} records)" for e, v, c, n in self.engines) or "none"
-        )
+        engines = "; ".join(_engine_text(*e) for e in self.engines) or "none"
         return [
             f"# {title}: {self.mode.value}",
             "",
@@ -65,12 +64,31 @@ class Header:
         ]
 
 
-def header(registry: Registry, now: datetime, eval_commit: str) -> Header:
+def _engine_text(engine: str, version: str, commit: str | None, n: int, runs: int) -> str:
+    where = f"at `{commit}`" if commit else "code commit not recorded"
+    counts = [f"{n} records"] if n else []
+    if runs:
+        counts.append(f"{runs} run logs")
+    return f"{engine} v{version} {where} ({'; '.join(counts)})"
+
+
+def header(
+    registry: Registry, now: datetime, eval_commit: str, runs: Sequence[BaselineRun] = ()
+) -> Header:
+    """Provenance of everything a report scores (EVAL-1 §7): every engine/version/code
+    commit of the recommendations and, when the report scores run logs (§2.2), of those
+    logs too, even for runs that recommended nothing (Codex X02)."""
     heads = {t: registry.head(t) for t in ("recommendations", "journal")}
-    combos = Counter(
+    recs: Counter[tuple[str, str, str | None]] = Counter(
         (r.engine, r.engine_version, r.code_commit) for r in registry.recommendations()
     )
-    engines = tuple((e, v, c, n) for (e, v, c), n in sorted(combos.items()))
+    logs = Counter(
+        (r.engine, r.engine_version, r.code_commit)
+        for r in runs
+        if r.mode is registry.mode and r.decision_time <= now
+    )
+    keys = sorted(set(recs) | set(logs), key=lambda k: (k[0], k[1], k[2] or ""))
+    engines = tuple((e, v, c, recs[(e, v, c)], logs[(e, v, c)]) for e, v, c in keys)
     return Header(registry.mode, now, eval_commit, heads, engines)
 
 
@@ -391,6 +409,93 @@ def _forecast_section(stats: Sequence[GroupStats]) -> list[str]:
     return lines
 
 
+def _pnl_section(stats: Sequence[GroupStats], groups: dict[str, list[TradeOutcome]]) -> list[str]:
+    return _table(
+        ("engine", "P&L (corrected)", "P&L (original)", "max drawdown",
+         "drawdown / avg CaR outstanding", "assignments", "forced exits", "exit retries",
+         "pin-risk flags", "corrections"),
+        (
+            (
+                s.group, _usd(s.pnl), _usd(s.pnl_original), _usd(s.max_drawdown),
+                _pct(s.max_drawdown / s.avg_car_outstanding)
+                if s.avg_car_outstanding else "-",
+                sum(o.assignments for o in groups[s.group]),
+                sum(o.forced_exits for o in groups[s.group]),
+                sum(o.exit_retries for o in groups[s.group]),
+                sum(o.pin_flags for o in groups[s.group]),
+                sum(o.corrections for o in groups[s.group]),
+            )
+            for s in stats
+        ),
+    )  # fmt: skip
+
+
+def _structure_section(
+    groups: dict[str, list[TradeOutcome]], cohort: Sequence[GroupStats]
+) -> list[str]:
+    eligible = {o.trade_id for c in cohort for o in c.closed}
+    by_struct: dict[tuple[str, str], list[TradeOutcome]] = defaultdict(list)
+    for g in sorted(groups):
+        for o in groups[g]:
+            stype = o.rec.candidate.structure_type
+            by_struct[(g, stype.value if stype else "-")].append(o)
+    rows: list[tuple[object, ...]] = []
+    for (g, st_name), items in sorted(by_struct.items()):
+        closed = [o for o in items if o.trade_id in eligible and o.realized_return is not None]
+        rr = [float(o.realized_return) for o in closed]  # type: ignore[arg-type]
+        resolved = sum(1 for o in items if o.filled or o.status is Status.UNFILLED)
+        filled = sum(1 for o in items if o.filled)
+        rows.append(
+            (
+                g,
+                st_name,
+                len(items),
+                _pct(filled / resolved) if resolved else "-",
+                len(closed),
+                _pct(statistics.fmean(float(o.rec.predicted_return.mean) for o in closed))
+                if closed
+                else "-",
+                _pct(statistics.fmean(rr)) if rr else "-",
+                _usd(sum((o.realized_pnl for o in closed), Decimal(0))),
+            )
+        )
+    return _table(
+        ("engine", "structure", "recommended", "fill rate", "closed (EVAL-1 cohort)",
+         "mean predicted", "mean realized", "P&L (cohort)"),
+        rows,
+    )  # fmt: skip
+
+
+def _rank_section(cohort: Sequence[GroupStats]) -> list[str]:
+    rows: list[tuple[object, ...]] = []
+    for s in cohort:
+        by_rank: dict[int, list[float]] = defaultdict(list)
+        for o in s.closed:
+            if o.realized_return is not None:
+                by_rank[o.rec.rank].append(float(o.realized_return))
+        rho = _spearman(
+            [float(o.rec.predicted_return.mean) for o in s.closed],
+            [float(o.realized_return) for o in s.closed if o.realized_return is not None],
+        )
+        rows.append(
+            (
+                s.group,
+                *(
+                    f"{_pct(statistics.fmean(by_rank[k]))} (n={len(by_rank[k])})"
+                    if by_rank[k]
+                    else "-"
+                    for k in range(1, 6)
+                ),
+                "-" if rho is None else f"{rho:.3f}",
+            )
+        )
+    return _table(
+        ("engine", "rank 1", "rank 2", "rank 3", "rank 4", "rank 5",
+         "Spearman(predicted, realized)"),
+        rows,
+    )  # fmt: skip
+
+
 def _sensitivity(
     groups: dict[str, list[TradeOutcome]], now: datetime, cutoff: date | None, label: str
 ) -> list[str]:
@@ -419,9 +524,21 @@ def _sensitivity(
     ]
     kept = {g: [o for o in items if not o.defects] for g, items in groups.items()}
     without = [group_stats(g, kept[g], now, cutoff) for g in sorted(kept)]
+    # Every result shown for this scope is repeated (Codex X03): returns and forecast
+    # scores always; for the operational scope also P&L and drawdown; for the EVAL-1
+    # cohort also the structure and rank tables.
+    lines += ["Realized versus predicted:", ""]
     lines += _realized_section(without)
-    lines += [""]
+    lines += ["", "Forecast scores:", ""]
     lines += _forecast_section(without)
+    if cutoff is None:
+        lines += ["", "P&L, drawdown and events:", ""]
+        lines += _pnl_section(without, kept)
+    else:
+        lines += ["", "By structure type:", ""]
+        lines += _structure_section(kept, without)
+        lines += ["", "Selection by rank:", ""]
+        lines += _rank_section(without)
     return lines
 
 
@@ -485,7 +602,8 @@ def cumulative_report(
     runs: Sequence[BaselineRun] = (),
     closes: OfficialCloseSource | None = None,
 ) -> str:
-    lines = header(registry, now, eval_commit).lines("Cumulative report")
+    scored_runs = runs if closes is not None else ()  # run logs are scored only with closes
+    lines = header(registry, now, eval_commit, scored_runs).lines("Cumulative report")
     groups: dict[str, list[TradeOutcome]] = defaultdict(list)
     for o in outcomes(registry):
         groups[o.engine_group].append(o)
@@ -519,24 +637,7 @@ def cumulative_report(
     lines += _realized_section(cohort)
 
     lines += ["", "## P&L, drawdown and events (operational: all closed trades)", ""]
-    lines += _table(
-        ("engine", "P&L (corrected)", "P&L (original)", "max drawdown",
-         "drawdown / avg CaR outstanding", "assignments", "forced exits", "exit retries",
-         "pin-risk flags", "corrections"),
-        (
-            (
-                s.group, _usd(s.pnl), _usd(s.pnl_original), _usd(s.max_drawdown),
-                _pct(s.max_drawdown / s.avg_car_outstanding)
-                if s.avg_car_outstanding else "-",
-                sum(o.assignments for o in groups[s.group]),
-                sum(o.forced_exits for o in groups[s.group]),
-                sum(o.exit_retries for o in groups[s.group]),
-                sum(o.pin_flags for o in groups[s.group]),
-                sum(o.corrections for o in groups[s.group]),
-            )
-            for s in stats
-        ),
-    )  # fmt: skip
+    lines += _pnl_section(stats, groups)
 
     lines += ["", "## Forecast scores (EVAL-1 §2.1; EVAL-1 cohort; descriptive)", ""]
     lines += _forecast_section(cohort)
@@ -544,66 +645,10 @@ def cumulative_report(
     lines += _underlying_section([r for r in runs if r.mode is registry.mode], closes, now)
 
     lines += ["", "## By structure type", ""]
-    eligible = {o.trade_id for c in cohort for o in c.closed}
-    by_struct: dict[tuple[str, str], list[TradeOutcome]] = defaultdict(list)
-    for s in stats:
-        for o in groups[s.group]:
-            stype = o.rec.candidate.structure_type
-            by_struct[(s.group, stype.value if stype else "-")].append(o)
-    struct_rows: list[tuple[object, ...]] = []
-    for (g, st_name), items in sorted(by_struct.items()):
-        closed = [o for o in items if o.trade_id in eligible and o.realized_return is not None]
-        rr = [float(o.realized_return) for o in closed]  # type: ignore[arg-type]
-        resolved = sum(1 for o in items if o.filled or o.status is Status.UNFILLED)
-        filled = sum(1 for o in items if o.filled)
-        struct_rows.append(
-            (
-                g,
-                st_name,
-                len(items),
-                _pct(filled / resolved) if resolved else "-",
-                len(closed),
-                _pct(statistics.fmean(float(o.rec.predicted_return.mean) for o in closed))
-                if closed
-                else "-",
-                _pct(statistics.fmean(rr)) if rr else "-",
-                _usd(sum((o.realized_pnl for o in closed), Decimal(0))),
-            )
-        )
-    lines += _table(
-        ("engine", "structure", "recommended", "fill rate", "closed (EVAL-1 cohort)",
-         "mean predicted", "mean realized", "P&L (cohort)"),
-        struct_rows,
-    )  # fmt: skip
+    lines += _structure_section(groups, cohort)
 
     lines += ["", "## Selection by rank (EVAL-1 cohort)", ""]
-    rows: list[tuple[object, ...]] = []
-    for s in cohort:
-        by_rank: dict[int, list[float]] = defaultdict(list)
-        for o in s.closed:
-            if o.realized_return is not None:
-                by_rank[o.rec.rank].append(float(o.realized_return))
-        rho = _spearman(
-            [float(o.rec.predicted_return.mean) for o in s.closed],
-            [float(o.realized_return) for o in s.closed if o.realized_return is not None],
-        )
-        rows.append(
-            (
-                s.group,
-                *(
-                    f"{_pct(statistics.fmean(by_rank[k]))} (n={len(by_rank[k])})"
-                    if by_rank[k]
-                    else "-"
-                    for k in range(1, 6)
-                ),
-                "-" if rho is None else f"{rho:.3f}",
-            )
-        )
-    lines += _table(
-        ("engine", "rank 1", "rank 2", "rank 3", "rank 4", "rank 5",
-         "Spearman(predicted, realized)"),
-        rows,
-    )  # fmt: skip
+    lines += _rank_section(cohort)
     lines += [
         "",
         "RAND-1's rank is its draw order, not a preference (DR-0031).",

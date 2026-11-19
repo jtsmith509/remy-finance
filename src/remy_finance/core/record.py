@@ -24,6 +24,10 @@ class Record(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid", validate_default=True)
 
     SCHEMA_VERSION: ClassVar[int] = 1
+    # Earlier versions still readable: each must differ from the current one only by
+    # fields added since, with defaults. A legacy record loads with those defaults and is
+    # re-serialized at the current version (its stored bytes are never rewritten).
+    LEGACY_SCHEMA_VERSIONS: ClassVar[tuple[int, ...]] = ()
 
     @model_validator(mode="before")
     @classmethod
@@ -31,7 +35,8 @@ class Record(BaseModel):
         if isinstance(data, Mapping) and canonical.TYPE_TAG in data:
             expected = canonical.type_tag(cls)
             tag = data[canonical.TYPE_TAG]
-            if tag != expected:
+            legacy = {f"{cls.__name__}@{v}" for v in cls.LEGACY_SCHEMA_VERSIONS}
+            if tag != expected and tag not in legacy:
                 raise ValueError(f"type tag {tag!r} does not match {expected!r}")
             return {k: v for k, v in data.items() if k != canonical.TYPE_TAG}
         return data

@@ -111,7 +111,15 @@ class ExpirationFit(Record):
 class BaselineRun(Record):
     """The per-run decision log (DR-0028 §11): one per baseline and decision snapshot.
 
-    An empty ``selected`` is a null decision; ``shortfall`` says why fewer than K."""
+    An empty ``selected`` is a null decision; ``shortfall`` says why fewer than K.
+
+    Schema 2 (DR-0043, Codex X02) adds ``code_commit``, the code that produced the run, so
+    forecasts scored from a run log (EVAL-1 §2.2) carry their provenance even when the run
+    recommended nothing. Schema 1 logs still load, with ``code_commit`` None ("not
+    recorded"); their files are never rewritten."""
+
+    SCHEMA_VERSION: ClassVar[int] = 2
+    LEGACY_SCHEMA_VERSIONS: ClassVar[tuple[int, ...]] = (1,)
 
     engine: str
     engine_version: str
@@ -131,6 +139,7 @@ class BaselineRun(Record):
     bug_signals: tuple[tuple[str, Dec], ...] = ()  # (candidate hash, predicted mean)
     random_seed: str | None = None
     flags: tuple[str, ...] = ()
+    code_commit: str | None = None  # None only in schema-1 logs
 
 
 def provenance_pairs(board: MarketState) -> tuple[tuple[str, str], ...]:
