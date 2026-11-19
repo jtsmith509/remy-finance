@@ -237,3 +237,4 @@ The power estimate's addenda (2026-11-10 and 2026-11-11) record the measured inp
   - `report cumulative` ran with ThetaData closes. It scored 37 underlying forecasts over 20 expirations, mean CRPS 0.0249 in S_T/F units and mean log score −1.236. It counted 4,347 forecasts not yet expired, 0 waiting for a close and 0 unavailable.
   - All 20 scored expirations fall in one ISO week. Movegen's 7-day minimum tenor means the first fitted expirations were 18 November, so the bootstrap correctly reports insufficient clusters.
   - Three RAND-1 trades have closed so far (−$2,410.15).
+  - `registry verify --export-dir` after the annotations, under the new verification code: **registry OK**. That covers 120 recommendations and 384 journal rows, with all 501 exported rows checked byte for byte (the five live-run exports plus 18 November's 83). The 3 annotations are exported at the next nightly step.
