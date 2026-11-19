@@ -408,11 +408,11 @@ class Registry:
         snapshot, so the files and the database are compared as of one moment: an export
         can't publish rows newer than the snapshot mid-check (Codex V03). ``lock=False`` is
         for a caller that already holds it."""
-        held = (
-            export_lock(export_dir)
-            if lock and export_dir is not None and export_dir.exists()
-            else nullcontext()
-        )
+        if export_dir is not None:
+            # One resolved destination for the lock and every read (Codex X05), locked even
+            # before its first export, so a first export can't race the check (X04).
+            export_dir = export_dir.resolve()
+        held = export_lock(export_dir) if lock and export_dir is not None else nullcontext()
         with held, self._read_snapshot():
             return self._verify(export_dir)
 
@@ -532,6 +532,7 @@ class Registry:
         The whole read-append-publish runs under a cross-process export lock and one
         consistent database snapshot, so two exporters can never erase each other's lines
         (Codex R1.1 F01). ``lock=False`` is for callers already holding ``export_lock``."""
+        export_dir = export_dir.resolve()  # lock and file I/O use one destination (X05)
         with export_lock(export_dir) if lock else nullcontext(), self._read_snapshot():
             mode_dir = export_dir / self.mode.value.lower()
             exported = _exported_heads(mode_dir)
