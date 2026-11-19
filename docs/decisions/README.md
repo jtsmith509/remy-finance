@@ -44,5 +44,6 @@
 | [DR-0040](DR-0040-underlying-forecast-scores.md) | Scoring MKT-1's underlying (S_T/F) forecasts (F09) | R1 | accepted |
 | [DR-0041](DR-0041-exclude-candidates-that-cannot-win.md) | Exclude candidates that can only lose | from R2 | accepted |
 | [DR-0042](DR-0042-rank-on-excess-return.md) | Rank on return in excess of the risk-free rate | from R2 | accepted |
+| [DR-0043](DR-0043-run-log-code-commit.md) | Run logs record their code commit (BaselineRun schema 2) | R1 maintenance | proposed |
 
 Each record has these sections: context, options considered, decision, consequences. Status stays *proposed* until Josh confirms it. A confirmed DR is superseded only by a new, linked DR; it is never edited in place.

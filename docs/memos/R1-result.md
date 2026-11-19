@@ -214,7 +214,7 @@ The power estimate's addenda (2026-11-10 and 2026-11-11) record the measured inp
 | 1 | F09 underlying scores | **Build now, before R2.** Done (§10). |
 | 2 | Calibration denominator | **Add to EVAL-2, alongside EVAL-1:** returns on execution-price capital at risk as a labelled second measure. The frozen EVAL-1 measure stays primary. Drafted with R2. |
 | 3 | Carry in MKT-1's predictions | **Accept the explanation for R1; from R2, rank on excess return** (DR-0042, proposed). MKT-1 v3 is unchanged. |
-| 4 | Pulling the V01–V07 fixes onto the Mac | **Pull tonight, after the 17:30 ET export.** |
+| 4 | Pulling the V01–V07 fixes onto the Mac | **Pull tonight, after the 17:30 ET export.** Correction (2026-11-19, Codex): the question said no feasible forecast changes. In fact the fixes change forecasts for structures that can only lose (or only win), all picked by RAND-1 and never by MKT-1. See `docs/review/R1-extras-findings.md`. |
 | 5 | Candidates that can only lose | **Exclude from R2, via a new DR** (DR-0041, proposed). R1's v3 records stay as recorded. |
 | 6 | The 3 affected forecasts | **Add an annotate command and annotate all 3.** Reports flag them and show results without them. Done in code (§10); the 3 annotations are written on the Mac after the pull. |
 | 7 | When Stop Point C closes | **After the R1 extras:** built, tested, recorded here, then Josh's confirmation. |
@@ -240,3 +240,12 @@ The power estimate's addenda (2026-11-10 and 2026-11-11) record the measured inp
   - All 20 scored expirations fall in one ISO week. Movegen's 7-day minimum tenor means the first fitted expirations were 18 November, so the bootstrap correctly reports insufficient clusters.
   - Three RAND-1 trades have closed so far (−$2,410.15).
   - `registry verify --export-dir` after the annotations, under the new verification code: **registry OK**. That covers 120 recommendations and 384 journal rows, with all 501 exported rows checked byte for byte (the five live-run exports plus 18 November's 83). The 3 annotations are exported at the next nightly step.
+
+## 11. Maintenance after Stop Point C
+
+- **2026-11-19, Codex's review of the R1 extras:**
+  - **Findings:** X01–X06, all medium, all fixed with regression tests (`docs/review/R1-extras-findings.md`).
+  - **New decision record:** DR-0043 (run logs record their code commit), proposed.
+  - **Offline guard:** the test suite now has a suite-wide guard that blocks every socket connection.
+  - **Gate:** **565 passed**.
+- **Correction to §9, question 4:** the fixes do change some forecasts, but only for structures that can only lose (or only win). MKT-1 never picks these. RAND-1 does, and its pre-fix picks of that kind are the 4 found by the V04 check, of which 3 are annotated.
