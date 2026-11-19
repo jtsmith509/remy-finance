@@ -231,4 +231,9 @@ The power estimate's addenda (2026-11-10 and 2026-11-11) record the measured inp
 - **On the Mac, after the pull:**
   - the 3 V04 annotations (`T-cb1617862c81df3cad3b403c`, `T-4b067e2f3855e90317373293`, `T-77e55cad8f9b504e273e4fc0`);
   - one `report cumulative` with closes, to confirm the F09 section runs against the live run logs.
-  - **Pending.**
+- **Done on the Mac (2026-11-18, evening ET):**
+  - The fixes were pulled.
+  - The 3 annotations were written: the report's sensitivity sections list `V04 (3)`.
+  - `report cumulative` ran with ThetaData closes. It scored 37 underlying forecasts over 20 expirations, mean CRPS 0.0249 in S_T/F units and mean log score −1.236. It counted 4,347 forecasts not yet expired, 0 waiting for a close and 0 unavailable.
+  - All 20 scored expirations fall in one ISO week. Movegen's 7-day minimum tenor means the first fitted expirations were 18 November, so the bootstrap correctly reports insufficient clusters.
+  - Three RAND-1 trades have closed so far (−$2,410.15).
