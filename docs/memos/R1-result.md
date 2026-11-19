@@ -1,10 +1,12 @@
-# R1 result: registry, paper execution, baselines and the live run (Stop Point C)
+# R1 result: registry, paper execution, baselines and the live run (Stop Point C: closed 2026-11-18)
 
 - **Stage:** R1 (handoff §6)
 - **Date:** 2026-11-18 (drafted 2026-11-11; the 5-day live run was 11–17 November 2026). Updated the same day with Josh's Stop Point C decisions (§9) and the R1 extras they added (§10).
 - **Branch:** `claude/cool-pascal-80kptn`
 
 > **Checks on the Mac (2026-11-18):** 0 bug signals. 3 of the 110 live recommendations (all RAND-1) have forecasts whose upper quantiles exceed the attainable maximum (Codex V04, §6); they are to be annotated.
+
+> **Stop Point C closed on 2026-11-18** (Josh's confirmation, after the Mac checks in §10). R1 is complete. The prospective scheduler keeps running. R2 starts on Josh's go-ahead.
 
 > **Status against the R1 definition of done (handoff §6):**
 > - **Replay month:** done. August 2026 ran end to end three times (MKT-1/RAND-1 v1, v2, v3). The replay registry passed `registry verify`, and the reports ran.
