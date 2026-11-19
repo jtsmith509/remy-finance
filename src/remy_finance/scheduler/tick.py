@@ -226,14 +226,20 @@ class Tick:
 
     def _read_watermark(self, path: Path, today: date) -> date:
         """The watermark, or, if it is unreadable (Codex V06: e.g. from a crash before
-        atomic writes), the earliest day with a scheduler marker: every day since the
+        atomic writes), the earliest day with a *session* marker: every day since the
         scheduler started is then re-checked. Days already done are skipped by their
-        markers, and nothing is captured or recommended late, so re-checking is safe."""
+        markers, and nothing is captured or recommended late, so re-checking is safe.
+
+        Nightly markers (export, backup) are not evidence: the first tick writes them for
+        the session *before* it started, which would invent gaps before deployment (Codex
+        X06). Session markers are written only for days from the first tick on."""
         try:
             return date.fromisoformat(path.read_text(encoding="utf-8").strip())
         except ValueError:
             days = [
-                date.fromisoformat(m.name[:10]) for m in self.markers.root.glob("????-??-??-*.done")
+                date.fromisoformat(m.name[:10])
+                for pattern in ("????-??-??-open-*.done", "????-??-??-close-*.done")
+                for m in self.markers.root.glob(pattern)
             ]
             day = min(days, default=today)
             self.log(f"watermark unreadable: recovered as {day} from the scheduler markers")
