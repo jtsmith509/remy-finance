@@ -1,6 +1,6 @@
 # DR-0043: Run logs record their code commit (BaselineRun schema 2)
 
-- **Status:** proposed (2026-11-19; awaiting Josh's confirmation)
+- **Status:** accepted (Josh, 2026-11-20)
 - **Date:** 2026-11-19
 - **Source:** Codex X02 (`docs/review/R1-extras-findings.md`). Extends [DR-0028](DR-0028-registry-details.md) §11 (run logs) and supports [DR-0040](DR-0040-underlying-forecast-scores.md).
 - **Stage:** R1 maintenance

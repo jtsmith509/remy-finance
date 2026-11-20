@@ -17,7 +17,7 @@
 | # | Finding | Fix | Commit |
 |---|---|---|---|
 | X01 | The lower return bound was hardcoded to −1 | `return_bounds` uses the signed minimum P&L minus fees, over capital at risk. It is exactly −1 for every structure that can lose its capital at risk, and above −1 only for structures that can only win (inconsistent quotes), whose impossible means are now skipped. The probe was adapted the same way as V04: the candidate is now skipped, so it's found among the generated candidates. | `87de9e3` |
-| X02 | Scored null-run forecasts lacked code provenance | **DR-0043 (proposed):** `BaselineRun` schema 2 records `code_commit`, and schema-1 logs still load as "not recorded". Report headers include the scored run logs' engine/version/commit with counts. | `5007860` |
+| X02 | Scored null-run forecasts lacked code provenance | **DR-0043 (accepted 2026-11-20):** `BaselineRun` schema 2 records `code_commit`, and schema-1 logs still load as "not recorded". Report headers include the scored run logs' engine/version/commit with counts. | `5007860` |
 | X03 | Sensitivity omitted P&L and other results | The sensitivity view repeats every result of its scope: returns and forecast scores always; P&L, drawdown and events for the operational scope; the structure and rank tables for the EVAL-1 cohort | `5007860` |
 | X04 | Verify skipped the lock before the first export | `verify(export_dir=…)` takes the export lock whenever a directory is given, before its read snapshot | `4fee3a3` |
 | X05 | A repointed alias redirected I/O outside the lock | `export` and `verify` resolve the destination once and use that path for the lock and every file operation | `4fee3a3` |
