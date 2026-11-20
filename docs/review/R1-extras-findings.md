@@ -27,7 +27,7 @@
 
 The R1 memo (§9, question 4) said the V01–V07 fixes could keep engine version v3 "because no feasible forecast changes". **That was wrong as stated.** Codex showed a feasible 85C/87.5C debit spread whose 1% quantile changed (−0.222 to −0.092).
 
-The precise statement is narrower. I checked it: that spread's best P&L is −$3.00, so it can only lose. The V04 and X01 fixes change forecasts **only for structures whose best case is a loss, or whose worst case is a gain**. MKT-1 never selects either kind, and from R2, DR-0041 excludes the first. Every live RAND-1 pick of that kind recorded before the fix was found by the V04 exposure check: 4 trades, of which 3 are annotated, while the 4th's forecast stayed within its bounds. Whether that justifies keeping v3 is put to Josh.
+The precise statement is narrower. I checked it: that spread's best P&L is −$3.00, so it can only lose. The V04 and X01 fixes change forecasts **only for structures whose best case is a loss, or whose worst case is a gain**. MKT-1 never selects either kind, and from R2, DR-0041 excludes the first. Every live RAND-1 pick of that kind recorded before the fix was found by the V04 exposure check: 4 trades, of which 3 are annotated, while the 4th's forecast stayed within its bounds. **Josh's decision (2026-11-20): keep v3.** The affected population is narrow, fully identified and excluded from R2 by DR-0041, and code commits separate pre- and post-fix records within v3.
 
 ---
 

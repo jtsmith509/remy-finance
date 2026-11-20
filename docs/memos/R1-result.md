@@ -248,4 +248,4 @@ The power estimate's addenda (2026-11-10 and 2026-11-11) record the measured inp
   - **New decision record:** DR-0043 (run logs record their code commit), accepted 2026-11-20.
   - **Offline guard:** the test suite now has a suite-wide guard that blocks every socket connection.
   - **Gate:** **565 passed**.
-- **Correction to §9, question 4:** the fixes do change some forecasts, but only for structures that can only lose (or only win). MKT-1 never picks these. RAND-1 does, and its pre-fix picks of that kind are the 4 found by the V04 check, of which 3 are annotated.
+- **Correction to §9, question 4:** the fixes do change some forecasts, but only for structures that can only lose (or only win). MKT-1 never picks these. RAND-1 does, and its pre-fix picks of that kind are the 4 found by the V04 check, of which 3 are annotated. Josh decided on 2026-11-20 to keep engine version v3; code commits separate pre- and post-fix records.
