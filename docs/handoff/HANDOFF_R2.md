@@ -1,6 +1,6 @@
 # REMY Finance — build brief: stage R2 (classical stochastic baseline)
 
-**Status: DRAFT, not approved.** Nothing in this brief is built until Josh approves it.
+**Status: DRAFT, not approved.** Josh answered the scoping questions (§11) and P1–P14 (§2, 2026-11-20). Nothing in this brief is built until Josh approves it.
 **Owner:** Josh Smith · **Repo:** `github.com/jtsmith509/remy-finance` · **Drafted:** 2026-11-20 by Claude, from Josh's answers to the R2 scoping questions (§11)
 **Governing spec:** `docs/spec/spec_v0.5.md` §13 (R2 is marked *proposed* there). Where this brief and the spec disagree, stop and ask.
 **Builds on:** R0–R1 (complete; `docs/memos/R0-result.md`, `docs/memos/R1-result.md`). The R0–R1 brief's ground rules, testing standards and conventions continue to apply unless this brief changes them.
@@ -35,23 +35,23 @@
 
 ---
 
-## 2. Proposed defaults (each needs a DR; Josh confirms or changes)
+## 2. Design choices (Josh's answers, 2026-11-20; each becomes a DR at build time)
 
-| # | Item | Proposed default |
+| # | Item | Decision |
 |---|---|---|
-| P1 | Engine names | `FAC-1` (factor engine), `HVOL-1` (historical-volatility lognormal), `MKTV-1` (MKT-1 with VRP), exit rule `EXIT-1`, history store `HIST-1`, close store `CLOSE-1`. |
-| P2 | MKT-1 and RAND-1 in R2 | **v4** = DR-0041 eligibility + DR-0042 `ADJ-1` ranking, still risk-neutral. The VRP version is a *separate* engine (`MKTV-1`), so MKT-1 stays the pure market-implied reference. The scoping question called it "MKT-1 v4"; this splits the two. |
+| P1 | Engine names | `FAC-1` (factor engine), `HVOL-1` (historical-volatility lognormal), `MKTV-1` (MKT-1 with VRP), `RAND-L1` (random long options, P11), exit rule `EXIT-1`, history store `HIST-1`, close store `CLOSE-1`. |
+| P2 | MKT-1 and RAND-1 in R2 | **v4** = DR-0041 eligibility + DR-0042 `ADJ-1` ranking, still risk-neutral. The VRP version is a *separate* engine (`MKTV-1`), so MKT-1 stays the pure market-implied reference. |
 | P3 | Named factors | Market (SPY); the 11 sector SPDRs, as sector factors after removing the market; rates (daily change in the 10-year Treasury yield); volatility (daily log change in VIX). Each name loads on the market, its own sector, rates and volatility. |
-| P4 | PCA residual | 3 components on the residual covariance after the named factors, refitted monthly. |
+| P4 | PCA residual | Components on the residual correlation after the named factors, chosen at each monthly refit by the **Kaiser rule** (eigenvalue above the average), **at most 5**. The count used is recorded with each fit. |
 | P5 | Shock distribution | Filtered historical simulation: GARCH(1,1) per factor, with standardized residuals bootstrapped jointly by date, so cross-factor dependence and fat tails are kept. Idiosyncratic residuals are bootstrapped by name. |
-| P6 | IV level | Each name's 30-day ATM IV log change = β × VIX log change + its own residual, fitted on the same 3 years. Option values along a path use Black-76 at the simulated forward, with IV = simulated level × the decision board's fixed smile shape in log-moneyness ("sticky moneyness"). |
+| P6 | IV level | Each name's 30-day ATM IV log change = β_vol × VIX log change + β_spot × the name's own log return (the spot-vol, or leverage, effect) + its own residual, fitted on the same 3 years. Option values along a path use Black-76 at the simulated forward, with IV = simulated level × the decision board's fixed smile shape in log-moneyness ("sticky moneyness"). |
 | P7 | Exit fills on paths | A simulated exit sells at the modelled mid minus the decision board's relative half-spread for that contract. Live exits use FILL-1 at the execution quote, as in R1. |
-| P8 | Paths and time | 2,000 joint daily paths per decision board, with the profit target checked at each daily close. **Budget:** FAC-1 must finish inside the 5-minute decision-to-execution window on the Mac mini. If not, the DR reduces paths or checkpoints, not the window. |
-| P9 | VRP estimate | Per name, rolling 3 years: the average ratio of realized 30-day variance to the 30-day implied variance at its start, shrunk toward the sector average. `MKTV-1` scales the risk-neutral distribution's variance by that ratio around the same forward. |
+| P8 | Paths and time | 2,000 joint daily paths per decision board, with the profit target checked at each daily close. **Budget:** all R2 engines must finish inside the 5-minute decision-to-execution window on the Mac mini. If not, a DR reduces paths (never below 500) or checks every few days instead, never the window. |
+| P9 | VRP estimate | **Regime-dependent.** Per name, over the rolling 3 years: the ratio of realized 30-day variance to the 30-day implied variance at its start, modelled as *a + b × VIX at the start*, with a and b shrunk toward the sector's, and the ratio clipped to [0.3, 1.5]. `MKTV-1` scales the risk-neutral distribution's variance by that ratio around the same forward. |
 | P10 | `HVOL-1` | A lognormal at each name's trailing 60-day realized volatility, drifting at the risk-free rate. It ranks long options by `ADJ-1` with `EXIT-1`, valued on its own paths. |
-| P11 | Long-option comparison set | FAC-1, MKTV-1 and HVOL-1 all select long options with `EXIT-1` under the same caps, so EVAL-2 compares them paired, on the same boards. MKT-1 v4 and RAND-1 v4 keep the full structure set. |
-| P12 | Close store | `CLOSE-1`: the nightly step saves every universe name's official close once it's public, write-once under `data/closes/`. F09 and R2 read from it, falling back to ThetaData only to fill it. This amends DR-0040's fetch-at-report-time choice. |
-| P13 | History store | `HIST-1`: daily closes and 30-day ATM IV per name, plus the factor series, for at least 3 years before the replay's first month, stored write-once with manifests. |
+| P11 | Long-option comparison set | FAC-1, MKTV-1, HVOL-1 and **`RAND-L1`** (seeded random long options, its forecasts from FAC-1 as RAND-1's come from MKT-1) all select long options with `EXIT-1` under the same caps, so EVAL-2 compares them paired, on the same boards. RAND-L1 is the selection-skill control. MKT-1 v4 and RAND-1 v4 keep the full structure set with HOLD-1. |
+| P12 | Close store | `CLOSE-1`: the nightly step saves the official close of every universe name, SPY, the sector SPDRs and VIX once it's public, write-once under `data/closes/`. **A one-off backfill** covers every past date the records need (live from 11 November 2026, plus the replay months), each close stamped with its real public time. F09 and R2 score only from the store; report-time fetching only fills gaps. This amends DR-0040. |
+| P13 | History store | `HIST-1`: daily closes and 30-day ATM IV per name, plus the factor series, for at least 3 years before the replay's first month, stored write-once with manifests. **ATM IV is derived from ThetaData's end-of-day option quotes** with the same parity forward and Black-76 as MKT-1, interpolated to 30 days, not taken from a vendor IV field. |
 | P14 | Live run for stop point F | 20 consecutive trading days with all R2 engines recording, with no manual intervention. |
 
 ---
@@ -75,7 +75,7 @@
 - **R2.0:** data verification spike, `HIST-1`, `CLOSE-1` and the text-archive collector.
 - **R2.1, EVAL-2 (pre-registered, frozen at D):**
   - the execution-price measure alongside EVAL-1's;
-  - the paired long-option comparison (FAC-1 vs MKTV-1 vs HVOL-1);
+  - the paired long-option comparison (FAC-1 vs MKTV-1 vs HVOL-1, with RAND-L1 as the selection control);
   - S_T/F and IV-level forecast scores for FAC-1;
   - updated power estimates for the paired comparison;
   - the confirmatory schedule.
@@ -88,12 +88,12 @@
 ### Part 2: engines and walk-forward → **STOP POINT E**
 - **R2.5:** the path generator (P5–P8): joint daily paths of prices and IV levels, reproducible from a recorded seed.
 - **R2.6:** `EXIT-1`, in the live engine (on real boards) and on simulated paths.
-- **R2.7:** `FAC-1` and `HVOL-1`: forecast distributions per candidate, recorded in the existing `Recommendation` schema, plus S_T/F quantiles in the run log, ranked by `ADJ-1`.
+- **R2.7:** `FAC-1`, `HVOL-1` and `RAND-L1`: forecast distributions per candidate, recorded in the existing `Recommendation` schema, plus S_T/F quantiles in the run log, ranked by `ADJ-1`.
 - **R2.8:** the 12-month walk-forward replay of every R2 engine, point-in-time with monthly refits, scored under the frozen EVAL-2 and labelled replay.
 - **R2.9:** reports: EVAL-2 sections, the paired comparison, and the forecast scores for the factor model.
 
 ### Part 3: live → **STOP POINT F**
-- **R2.10:** cut-over: MKT-1 v4, RAND-1 v4, FAC-1, MKTV-1 and HVOL-1 start recording prospectively.
+- **R2.10:** cut-over: MKT-1 v4, RAND-1 v4, FAC-1, MKTV-1, HVOL-1 and RAND-L1 start recording prospectively.
 - **R2.11:** a live run (P14), then the R2 result memo.
 
 ---
@@ -119,7 +119,7 @@ Causal search, event ordering and opening books (R3); policy optimization, condi
 ## 7. Definition of done
 
 - **Stop point D:** `HIST-1`, `CLOSE-1` and the archive collector run. EVAL-2 is frozen. MKT-1 v4, RAND-1 v4 and MKTV-1 pass their tests. The factor model is fitted point-in-time, with its diagnostics in a memo.
-- **Stop point E:** FAC-1 and HVOL-1 pass their tests, including the performance budget. The 12-month walk-forward replay completes, with `registry verify` OK, and is scored under EVAL-2 as replay. Calibration findings are explained.
+- **Stop point E:** FAC-1, HVOL-1 and RAND-L1 pass their tests, including the performance budget. The 12-month walk-forward replay completes, with `registry verify` OK, and is scored under EVAL-2 as replay. Calibration findings are explained.
 - **Stop point F:** the cut-over is done and the live run passes (P14). The R2 memo is written, and every DR is confirmed.
 
 ---
@@ -144,14 +144,9 @@ At each stop: what was built, the test results, the DRs awaiting confirmation, a
 
 ---
 
-## 10. Open choices for Josh before approval
+## 10. Remaining before approval
 
-P1–P14 in §2. Each gets a DR, but the ones that most shape R2 are:
-- **P2:** MKT-1 v4 stays risk-neutral, with VRP as a separate engine.
-- **P5:** filtered historical simulation.
-- **P8:** 2,000 paths within 5 minutes.
-- **P11:** the paired long-option comparison.
-- **P14:** a 20-day live run.
+All of P1–P14 are answered. What's left is Josh's approval of the brief as a whole. Each P-choice is recorded as a DR when its task is built, and amended only through a new DR.
 
 ---
 
