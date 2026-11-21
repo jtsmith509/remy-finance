@@ -1,19 +1,20 @@
 # CLAUDE.md
 
-Start here, then read the two governing documents in full before you change anything:
+Start here, then read the governing documents in full before you change anything:
 
-- **Build brief:** `docs/handoff/HANDOFF_R0_R1.md`. It gives scope, tasks, fixtures and stop points.
+- **Build brief (current stage): `docs/handoff/HANDOFF_R2.md`** (R2, approved 2026-11-21). It gives scope, tasks, contracts, tests and stop points D, E and F.
+- **Earlier brief:** `docs/handoff/HANDOFF_R0_R1.md` (R0–R1, complete). Its conventions and testing standards still apply unless the R2 brief changes them.
 - **Spec:** `docs/spec/spec_v0.5.md`. It is an accepted-changes copy; the `.docx` beside it is the source of record.
 
 If the brief and the spec disagree, **stop and ask Josh**. Don't resolve it yourself.
 
 ## Ground rules (handoff Section 0)
 
-1. **Scope is R0 and R1 only.** Don't build R2–R6: no factor models, no causal search, no LSM policy optimizer, no neural or hybrid models, no volatility-risk-premium estimation. Leave clean seams such as interfaces and hooks, but don't stub those stages out in detail.
+1. **Scope is R2 only** (R2 brief §0). Don't build R3–R6: no causal search, event ordering or opening books; no policy optimizer, conditional entries or MultiPV; no neural or hybrid models. Leave clean seams, but don't stub those stages out in detail. **EVAL-2 is approved by Josh before any empirical R2 model output exists** (R2 brief §0.3).
 2. **Stage process.**
    - Every material design choice gets a decision record: `docs/decisions/DR-NNNN-short-title.md`. It covers context, options considered, decision and consequences. Status stays **proposed** until Josh confirms it. Settled decisions (handoff Section 1) are reopened only through a new, linked DR.
    - Each stage ends with a short result memo in `docs/memos/`: what was built, test results, known limitations and open questions.
-   - **Stop points A, B and C (handoff Section 9) are hard stops.** Summarize what was built, the test results, the DRs awaiting confirmation and the specific questions for Josh. Then wait for his explicit confirmation.
+   - **Stop points are hard stops:** A, B and C (R0–R1, done), then **D, E and F** (R2 brief §9). Summarize what was built, the test results, the DRs awaiting confirmation and the specific questions for Josh. Then wait for his explicit confirmation.
 3. **Correctness before breadth.** Test payoff math, point-in-time hygiene and registry immutability before building anything that depends on them.
 4. **No look-ahead, ever.** Any code path that can read data stamped after the decision time is a defect, not an approximation. Models, movegen and baselines read data only through `PointInTimeView`.
 5. **No brokerage code.** No order routing and no broker SDKs. "Orders" are paper records only.
@@ -31,7 +32,7 @@ If the brief and the spec disagree, **stop and ask Josh**. Don't resolve it your
 
 ## Status
 
-- Current stage: **R1 complete.** Stop Point B closed 2026-11-09 (`docs/memos/R0-result.md`); **Stop Point C closed 2026-11-18** (`docs/memos/R1-result.md`). R2 starts only on Josh's go-ahead. Until then the scope rule above still applies: no R2 work. The prospective scheduler keeps running on the Mac mini.
+- Current stage: **R2, Part 1 (R2.0, data verification and go/no-go).** The R2 brief was approved 2026-11-21, after Codex's plan review (`docs/review/R2-brief-findings.md`). The next gates: Josh's go/no-go on the R2.0 coverage matrix, then Josh's approval of EVAL-2, then Stop Point D. R1 is complete: Stop Point B closed 2026-11-09 (`docs/memos/R0-result.md`); **Stop Point C closed 2026-11-18** (`docs/memos/R1-result.md`). The prospective scheduler keeps running on the Mac mini.
 - Agreed for R1: optimize the move generator early, keeping DR-0025's exactness (done). The spec §11 power estimate and the pre-registered scoring protocol **EVAL-1** were approved 2026-11-09 (`docs/evaluation/`). EVAL-1 is frozen, and changes go only through EVAL-2. Before the 5-day live run: (1) the EVAL-1 §6 record changes, done in DR-0032; (2) run the replay month (August 2026, DR-0034; runbook in `docs/runbook/scheduler.md`) and add a dated update to the power estimate. The first August run (MOVEGEN-1, MKT-1 v1) is archived; it was re-run with MKT-1/RAND-1 v2 (DR-0037), and the power addendum is written (2026-11-10). The third run with v3 (arbitrage-free SVI, DR-0038) is done and recorded in the addendum (2026-11-11). Both pre-live steps are complete.
 - DR-0001 to DR-0027 are **accepted** (2026-11-08); DR-0028 to DR-0036 accepted 2026-11-09; DR-0037 and DR-0038 accepted 2026-11-10. Change them only through new, linked DRs. DR-0039 (held names on boards) accepted 2026-11-11. DR-0040 (F09 scoring), DR-0041 (exclude candidates that can only lose, from R2) and DR-0042 (rank on excess return, from R2) accepted 2026-11-18.
 - Codex R1 review (at `b38b9b1`): 16 findings, 15 fixed with regression tests (2026-11-11); see `docs/review/R1.1-findings.md`, `R1.2-R1.5-findings.md` and `R1.6-R1.8-findings.md`. **R1.6 F09** (EVAL-1 §2.2 scoring of the underlying S_T/F forecasts) was built 2026-11-18 (DR-0040). Codex's check of the fixes (2026-11-11, `docs/review/R1-fixes-findings.md`): V01–V07 fixed 2026-11-18. The 5-day live run (11, 12, 13, 16 and 17 November) passed: 20 of 20 slots, 0 gaps, 0 failures, no manual intervention. The R1 memo is final (`docs/memos/R1-result.md`). Josh's Stop Point C decisions (2026-11-18) are in memo §9. The R1 extras are built (annotate command; F09, DR-0040), and the Mac is on the fixed code with the 3 V04 annotations written. **Carried into R2:** EVAL-2's execution-price measure, DR-0041 (eligibility) and DR-0042 (ADJ-1 ranking). Codex's review of the R1 extras (2026-11-19, `docs/review/R1-extras-findings.md`): X01–X06 fixed; DR-0043 (run-log code commit, BaselineRun schema 2) accepted 2026-11-20. The Mac pulls these fixes outside session hours.
