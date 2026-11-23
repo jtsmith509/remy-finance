@@ -48,6 +48,6 @@
 | [DR-0044](DR-0044-r2-data-substitutions.md) | R2 data substitutions (SPY 30-day IV for VIX; Massive rates history) and the 3-year minimum-history rule | R2 | accepted |
 | [DR-0045](DR-0045-hist-1-history-store.md) | HIST-1: the point-in-time history store (closes, ATM IV, yields, total returns) | R2 | proposed |
 | [DR-0046](DR-0046-close-1-nightly-and-capture-coverage.md) | CLOSE-1 as HIST-1's close series, the nightly HIST-1 update, and capture coverage (EVAL-2 §6.3) | R2 | accepted |
-| [DR-0047](DR-0047-run-status-record.md) | The run-status record (EVAL-2 §4.3): a hash-chained `run_status` registry table (REGISTRY-2) and independent engine runs | R2 | proposed |
+| [DR-0047](DR-0047-run-status-record.md) | The run-status record (EVAL-2 §4.3): a hash-chained `run_status` registry table (REGISTRY-2) and independent engine runs | R2 | accepted |
 
 Each record has these sections: context, options considered, decision, consequences. Status stays *proposed* until Josh confirms it. A confirmed DR is superseded only by a new, linked DR; it is never edited in place.

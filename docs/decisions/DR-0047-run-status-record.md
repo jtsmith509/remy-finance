@@ -1,6 +1,6 @@
 # DR-0047: The run-status record (REGISTRY-2)
 
-- **Status:** proposed (2026-11-23). Josh chose where the records live: a new hash-chained registry table. The rest awaits his confirmation.
+- **Status:** accepted (Josh, 2026-11-23). The records live in a hash-chained registry table; migration is an explicit one-time command; a failed engine is recorded and never retried; replay stops on a failure and records nothing; late receipt and no-fit are derived, not stored.
 - **Date:** 2026-11-23
 - **Source:** EVAL-2 §4.3 (the run-status record, required before the cut-over; Codex I03) and §10; DR-0033 (scheduler: skipped slots, late receipt); R1.1's registry (DR-0012, Codex R1.1 and R1 fixes).
 - **Stage:** R2, Part 1
@@ -54,6 +54,13 @@
 
 ## Review (2026-11-23)
 An internal adversarial review found 6 defects and some missing tests, all fixed with regression tests: see `docs/review/run-status-findings.md`.
+
+## Josh's answers (2026-11-23)
+1. **Where the records live:** a new hash-chained `run_status` registry table (REGISTRY-2).
+2. **Migration:** an explicit, one-time `remy registry migrate`, run outside session hours.
+3. **A failed engine in the live scheduler:** recorded as `failed`, with a failure record and a notification, and never retried for that slot.
+4. **Replay:** stops on an engine failure and records no `failed` status; the resumed replay re-runs the engine.
+5. **Late receipt and no accepted fit:** derived as EVAL-2 says, not stored in the status.
 
 ## Consequences
 - **The R2 coverage rule** can be computed from the registry alone. Missing statuses are visible, and are counted as failures.
