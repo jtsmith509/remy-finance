@@ -17,7 +17,7 @@ from decimal import Decimal
 from typing import Any, Protocol
 
 from remy_finance.core import CorporateAction, DividendEvent
-from remy_finance.data.timeutil import et_at, next_session, session_close, xnys
+from remy_finance.data.timeutil import et_at, next_session, previous_session, session_close, xnys
 from remy_finance.history.atm_iv import atm_iv30, rows_from_vendor
 from remy_finance.history.records import RATE_SYMBOL, HistObservation, HistSeries
 from remy_finance.history.store import HistStore
@@ -29,6 +29,8 @@ YIELD_FIELDS = {
     HistSeries.YIELD_10Y: "yield_10_year",
 }
 EOD_PUBLIC = (17, 15)  # ThetaData end-of-day report time (DR-0026)
+SECTOR_SPDRS = ("XLB", "XLC", "XLE", "XLF", "XLI", "XLK", "XLP", "XLRE", "XLU", "XLV", "XLY")
+NIGHTLY_WINDOW_SESSIONS = 10  # the nightly run re-checks this many sessions (catch-up)
 IV_DECIMALS = Decimal("0.000001")
 
 
@@ -94,6 +96,7 @@ class ThetaMassiveHistSource:
 
 @dataclass
 class BuildSummary:
+    symbols: int = 0
     closes_added: int = 0
     yields_added: int = 0
     events_added: int = 0
@@ -101,8 +104,30 @@ class BuildSummary:
     iv_added: int = 0
     iv_missing: int = 0
     fetch_errors: list[str] = field(default_factory=list)
+    # (symbol, session) in the range with no stored close after the fetch: a delayed or
+    # absent vendor close (or a name not yet listed); retried by the next run.
+    closes_absent: list[tuple[str, date]] = field(default_factory=list)
     conflicts: int = 0
     seconds: float = 0.0
+
+
+def base_symbols() -> list[str]:
+    """HIST-1's standing coverage: UNIV-CANDIDATES-1, SPY and the sector SPDRs."""
+    from remy_finance.universe.candidates import UNIV_CANDIDATES_1
+
+    return sorted({*UNIV_CANDIDATES_1, "SPY", *SECTOR_SPDRS})
+
+
+def nightly_window(day: date) -> tuple[date, date]:
+    """The last ``NIGHTLY_WINDOW_SESSIONS`` XNYS sessions ending at ``day``."""
+    start = day
+    for _ in range(NIGHTLY_WINDOW_SESSIONS - 1):
+        start = previous_session(start)
+    return start, day
+
+
+def last_session_of_week(day: date) -> bool:
+    return next_session(day).isocalendar()[:2] != day.isocalendar()[:2]
 
 
 def sessions_between(start: date, end: date) -> list[date]:
@@ -196,7 +221,7 @@ def build(
     clock: Callable[[], datetime] = lambda: datetime.now(UTC),
 ) -> BuildSummary:
     t0 = time.perf_counter()
-    summary = BuildSummary()
+    summary = BuildSummary(symbols=len(symbols))
     sessions = sessions_between(start, end)
     session_set = set(sessions)
     now = clock()
@@ -226,6 +251,9 @@ def build(
             summary.conflicts += conflicts
         except Exception as e:
             summary.fetch_errors.append(f"closes {s}: {type(e).__name__}: {e}")
+            continue
+        present = {o.session for o in store.observations(HistSeries.CLOSE, s, start, end)}
+        summary.closes_absent += [(s, d) for d in sessions if d not in present]
     log(
         f"closes +{summary.closes_added}, yields +{summary.yields_added}, "
         f"events +{summary.events_added}, unusable dividends +{summary.unusable_added}"

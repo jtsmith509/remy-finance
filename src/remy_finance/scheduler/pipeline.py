@@ -34,8 +34,9 @@ from remy_finance.data.view import official_close_as_of
 from remy_finance.execution.engine import PaperEngine
 from remy_finance.movegen.generator import generate, list_hash
 from remy_finance.registry import Recommendation, Registry
-from remy_finance.scheduler.held import held_only, held_underlyings
+from remy_finance.scheduler.held import held_underlyings
 from remy_finance.scheduler.runlog import RunLogStore
+from remy_finance.scheduler.tracked import not_recommendable
 
 Baseline = Callable[..., tuple[list[Recommendation], BaselineRun]]
 BASELINES: tuple[tuple[str, Baseline], ...] = (("MKT-1", run_mkt1), ("RAND-1", run_rand1))
@@ -79,8 +80,10 @@ class Pipeline:
                 t0 = time.perf_counter()
                 candidates, summary = generate(board)
                 list_digest = summary.list_hash
-                held = held_only(board)
-                if held:  # DR-0039: held-only names are marked and managed, not recommended
+                # DR-0039 and DR-0046: held-only and tracked-only names are captured,
+                # marked and managed, never recommended.
+                held = not_recommendable(board)
+                if held:
                     candidates = tuple(
                         c for c in candidates if not c.legs or underlying_of(c) not in held
                     )

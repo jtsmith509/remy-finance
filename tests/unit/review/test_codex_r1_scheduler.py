@@ -93,9 +93,14 @@ def test_f02_board_symbols_add_held_names_after_the_members() -> None:
 class HeldWorld(World):
     held_seen: list[frozenset[str]] = field(default_factory=list)
 
-    def capture(self, session: Session, held: frozenset[str] = frozenset()) -> MarketState:
+    def capture(
+        self,
+        session: Session,
+        held: frozenset[str] = frozenset(),
+        tracked: frozenset[str] = frozenset(),
+    ) -> MarketState:
         self.held_seen.append(held)
-        return super().capture(session, held)
+        return super().capture(session, held, tracked)
 
 
 def test_f02_tick_captures_boards_with_the_held_names(tmp_path: Path) -> None:

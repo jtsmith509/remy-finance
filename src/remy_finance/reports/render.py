@@ -28,6 +28,7 @@ from remy_finance.baselines.common import BaselineRun
 from remy_finance.core import Mode
 from remy_finance.data.protocol import OfficialCloseSource
 from remy_finance.data.timeutil import et_date
+from remy_finance.history.closes import CloseStats
 from remy_finance.registry import EventKind, Registry
 from remy_finance.reports.bootstrap import cluster_bootstrap
 from remy_finance.reports.outcomes import EVAL1_CENSOR_DAYS, Status, TradeOutcome, outcomes
@@ -592,6 +593,14 @@ def _underlying_section(
         "§1.4 to the forecast's decision date. Risk premia make some miscalibration of a "
         "risk-neutral density expected (§2.2).",
     ]
+    stats = getattr(closes, "stats", None)
+    if isinstance(stats, CloseStats):
+        lines += [
+            "",
+            f"Closes come from CLOSE-1 (DR-0046) through the point-in-time rule: "
+            f"{stats.from_store} read from the store, {stats.filled} store gaps filled from "
+            f"ThetaData and stored, {stats.not_found} not found.",
+        ]
     return lines
 
 

@@ -1,0 +1,88 @@
+"""CLOSE-1 (DR-0046): official closes from HIST-1, store first, gaps filled once public."""
+
+from __future__ import annotations
+
+from datetime import UTC, date, datetime
+from decimal import Decimal
+from pathlib import Path
+
+import pytest
+
+from remy_finance.core import LookaheadError, OfficialClose
+from remy_finance.data.timeutil import et_at, session_close
+from remy_finance.data.view import official_close_as_of
+from remy_finance.history import HistSeries, HistStore
+from remy_finance.history.closes import HistCloseSource, StoreFirstCloses
+from tests.unit.history.helpers import obs
+
+D = date(2026, 11, 20)
+
+
+class Vendor:
+    def __init__(self, price: str = "101.25") -> None:
+        self.price = Decimal(price)
+        self.calls = 0
+
+    def official_close(self, symbol: str, session_date: date) -> OfficialClose | None:
+        self.calls += 1
+        if symbol == "NONE":
+            return None
+        return OfficialClose(
+            symbol=symbol,
+            session_date=session_date,
+            price=self.price,
+            event_time=session_close(session_date),
+            public_time=et_at(session_date, 17, 15),
+            ingest_time=datetime(2026, 11, 23, tzinfo=UTC),
+            source="thetadata:stock/history/eod",
+        )
+
+
+def test_store_only_source(tmp_path: Path) -> None:
+    store = HistStore(tmp_path / "h.sqlite")
+    store.add_observations([obs(HistSeries.CLOSE, "AAA", D, "100.5")])
+    src = HistCloseSource(store)
+    got = src.official_close("AAA", D)
+    assert got is not None and got.price == Decimal("100.5")
+    assert got.public_time == et_at(D, 17, 15) and got.source.startswith("CLOSE-1:")
+    assert src.official_close("AAA", date(2026, 11, 19)) is None
+
+
+def test_a_gap_is_filled_from_the_vendor_once_public_and_stored(tmp_path: Path) -> None:
+    store = HistStore(tmp_path / "h.sqlite")
+    vendor = Vendor()
+    early = StoreFirstCloses(store, vendor, clock=lambda: et_at(D, 17, 0))
+    assert early.official_close("AAA", D) is not None  # returned, but not stored
+    assert early.stats.filled == 0 and HistCloseSource(store).official_close("AAA", D) is None
+    assert official_close_as_of(early, "AAA", D, et_at(D, 17, 0)) is None  # not public yet
+    late = StoreFirstCloses(store, vendor, clock=lambda: et_at(D, 18))
+    got = official_close_as_of(late, "AAA", D, et_at(D, 18))
+    assert got is not None and got.price == Decimal("101.25") and late.stats.filled == 1
+    again = official_close_as_of(late, "AAA", D, et_at(D, 18))
+    assert again == got and late.stats.from_store == 1 and vendor.calls == 3  # 2 early, 1 fill
+
+
+def test_the_stored_close_wins_over_a_differing_vendor_value(tmp_path: Path) -> None:
+    store = HistStore(tmp_path / "h.sqlite")
+    store.add_observations([obs(HistSeries.CLOSE, "AAA", D, "100")])
+    vendor = Vendor("999")
+    src = StoreFirstCloses(store, vendor, clock=lambda: et_at(D, 18))
+    got = src.official_close("AAA", D)
+    assert got is not None and got.price == Decimal("100") and vendor.calls == 0
+
+
+def test_not_found_and_no_fallback(tmp_path: Path) -> None:
+    store = HistStore(tmp_path / "h.sqlite")
+    src = StoreFirstCloses(store, Vendor(), clock=lambda: et_at(D, 18))
+    assert src.official_close("NONE", D) is None and src.stats.not_found == 1
+    alone = StoreFirstCloses(store, None, clock=lambda: et_at(D, 18))
+    assert alone.official_close("AAA", D) is None and alone.stats.not_found == 1
+
+
+def test_point_in_time_rule_still_applies(tmp_path: Path) -> None:
+    store = HistStore(tmp_path / "h.sqlite")
+    store.add_observations([obs(HistSeries.CLOSE, "AAA", D, "100")])
+    src = HistCloseSource(store)
+    assert official_close_as_of(src, "AAA", D, et_at(D, 17, 14)) is None
+    with pytest.raises(LookaheadError):
+        official_close_as_of(src, "AAA", D, et_at(date(2026, 11, 19), 18))

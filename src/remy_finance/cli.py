@@ -8,12 +8,15 @@ from collections import Counter
 from collections.abc import Sequence
 from datetime import date, datetime
 from pathlib import Path
-from typing import Annotated
+from typing import TYPE_CHECKING, Annotated
 
 import typer
 
 from remy_finance import __version__
 from remy_finance.core import MarketState, Mode, Provenance, Session
+
+if TYPE_CHECKING:
+    from remy_finance.history.closes import StoreFirstCloses
 
 app = typer.Typer(help="REMY Finance command-line interface.", no_args_is_help=True)
 snapshot_app = typer.Typer(help="Market snapshots (R0.4).", no_args_is_help=True)
@@ -48,6 +51,16 @@ SessionOpt = Annotated[str, typer.Option(help="open or close")]
 
 def _data_dir() -> Path:
     return Path(os.environ.get("REMY_DATA_DIR", "data"))
+
+
+def _close1() -> StoreFirstCloses:
+    """CLOSE-1 (DR-0046): official closes from HIST-1 first; a gap is fetched from
+    ThetaData and stored, write-once, once public."""
+    from remy_finance.data.thetadata import ThetaDataSource
+    from remy_finance.history import HistStore, hist_path
+    from remy_finance.history.closes import StoreFirstCloses
+
+    return StoreFirstCloses(HistStore(hist_path(_data_dir())), ThetaDataSource())
 
 
 def _symbols(text: str, session_date: date) -> tuple[list[str], str]:
@@ -504,8 +517,7 @@ def run_tick() -> None:
     """One idempotent scheduler tick (launchd runs this every minute; DR-0033)."""
     from datetime import UTC
 
-    from remy_finance.data.thetadata import ThetaDataSource
-    from remy_finance.scheduler.live import live_capture
+    from remy_finance.scheduler.live import live_capture, live_hist_nightly
     from remy_finance.scheduler.ops import code_commit, notify
     from remy_finance.scheduler.tick import Tick
 
@@ -513,7 +525,8 @@ def run_tick() -> None:
     tick = Tick(
         data_dir=data,
         capture=live_capture(data),
-        closes=ThetaDataSource(),
+        closes=_close1(),
+        hist_nightly=live_hist_nightly(data),
         clock=lambda: datetime.now(UTC),
         commit=lambda: code_commit(REPO_DIR, require_clean=True),
         notify=notify,
@@ -678,7 +691,10 @@ def report_cumulative(
     out: OutOpt = None,
     closes: Annotated[
         bool,
-        typer.Option(help="Score the underlying forecasts against ThetaData official closes."),
+        typer.Option(
+            help="Score the underlying forecasts against CLOSE-1 official closes (gaps "
+            "filled from ThetaData)."
+        ),
     ] = True,
 ) -> None:
     """By baseline: fill rate, realized vs predicted, P&L, drawdown, scores, ranks, and
@@ -688,11 +704,7 @@ def report_cumulative(
     from remy_finance.reports.render import cumulative_report
     from remy_finance.scheduler.runlog import RunLogStore
 
-    source = None
-    if closes:
-        from remy_finance.data.thetadata import ThetaDataSource
-
-        source = ThetaDataSource()
+    source = _close1() if closes else None
     runs = RunLogStore(_data_dir() / "runs").all(_mode(mode))
     with _open_registry(mode) as reg:
         _emit(cumulative_report(reg, datetime.now(UTC), _eval_commit(), runs, source), out)
@@ -747,7 +759,7 @@ def replay_run(
     driver = ReplayDriver(
         data_dir=_data_dir(),
         build=build,
-        closes=theta,
+        closes=_close1(),
         code_commit=code_commit(REPO_DIR, require_clean=False),
         log=typer.echo,
         last_day=et_date(datetime.now(UTC)) - timedelta(days=1),
@@ -901,8 +913,6 @@ if __name__ == "__main__":
 
 # ---------------------------------------------------------------------- HIST-1 (R2)
 
-HIST_SECTORS = ("XLB", "XLC", "XLE", "XLF", "XLI", "XLK", "XLP", "XLRE", "XLU", "XLV", "XLY")
-
 
 @hist_app.command("build")
 def hist_build(
@@ -922,13 +932,10 @@ def hist_build(
     from remy_finance.data.thetadata import ThetaDataSource
     from remy_finance.data.timeutil import et_date
     from remy_finance.history import HistStore, hist_path
-    from remy_finance.history.build import ThetaMassiveHistSource, build
-    from remy_finance.universe.candidates import UNIV_CANDIDATES_1
+    from remy_finance.history.build import ThetaMassiveHistSource, base_symbols, build
 
     names = (
-        [s.strip().upper() for s in symbols.split(",") if s.strip()]
-        if symbols
-        else sorted({*UNIV_CANDIDATES_1, "SPY", *HIST_SECTORS})
+        [s.strip().upper() for s in symbols.split(",") if s.strip()] if symbols else base_symbols()
     )
     last = date.fromisoformat(end) if end else et_date(datetime.now(UTC)) - timedelta(days=1)
     store = HistStore(hist_path(_data_dir()))
@@ -948,6 +955,11 @@ def hist_build(
         f"(missing {s.iv_missing}), conflicts {s.conflicts}, fetch errors "
         f"{len(s.fetch_errors)} (re-run to retry)"
     )
+    if s.closes_absent:
+        typer.echo(
+            f"  {len(s.closes_absent)} (symbol, session) without a close (not yet listed, "
+            "delisted or delayed); they are retried by the next run"
+        )
     for e in s.fetch_errors[:20]:
         typer.echo(f"  {e}")
 
@@ -973,3 +985,74 @@ def hist_status() -> None:
         typer.echo(f"  unusable {kind} {reason}: {n} (those sessions are excluded from returns)")
     for c in store.conflicts()[:20]:
         typer.echo(f"  conflict {c.series} {c.symbol} {c.session}: kept {c.kept_hash[:12]}")
+
+
+@hist_app.command("nightly")
+def hist_nightly(
+    day: Annotated[str, typer.Option(help="Session, YYYY-MM-DD; default the latest")] = "",
+) -> None:
+    """Run the scheduler's nightly HIST-1 / CLOSE-1 update by hand (DR-0046). The tick
+    runs it after 17:30 ET; this is for a missed night or a check."""
+    from datetime import UTC
+
+    from remy_finance.core import Mode
+    from remy_finance.data.timeutil import et_at, et_date, previous_session
+    from remy_finance.registry import Registry, registry_path
+    from remy_finance.scheduler.live import live_hist_nightly
+    from remy_finance.scheduler.pipeline import Pipeline
+    from remy_finance.scheduler.runlog import RunLogStore
+    from remy_finance.scheduler.tracked import forecast_targets
+    from remy_finance.snapshots.schedule import is_session
+
+    now = datetime.now(UTC)
+    if day:
+        d = date.fromisoformat(day)
+    else:
+        today = et_date(now)
+        d = today if is_session(today) and now >= et_at(today, 17, 30) else previous_session(today)
+    data = _data_dir()
+    runs = RunLogStore(data / "runs")
+    tracked = forecast_targets(runs, Mode.PROSPECTIVE, d)
+    path = registry_path(data, Mode.PROSPECTIVE)
+    if path.exists():
+        with Registry.open(path) as reg:
+            tracked |= Pipeline(reg, runs, "", lambda: now).held(d)
+    s = live_hist_nightly(data)(d, tracked)
+    typer.echo(
+        f"HIST-1 nightly {d}: {s.symbols} names ({len(tracked)} tracked), closes "
+        f"+{s.closes_added}, IV +{s.iv_added} (missing {s.iv_missing}), events "
+        f"+{s.events_added}, conflicts {s.conflicts}, closes absent {len(s.closes_absent)}, "
+        f"fetch errors {len(s.fetch_errors)}"
+    )
+    for e in s.fetch_errors[:20]:
+        typer.echo(f"  {e}")
+
+
+@hist_app.command("coverage")
+def hist_coverage(
+    fill: Annotated[
+        bool, typer.Option("--fill", help="Fetch the missing closes from ThetaData into CLOSE-1")
+    ] = False,
+) -> None:
+    """Every official close the records need (positions' and MKT-1 fits' expirations, both
+    registries): how many are in CLOSE-1, and which are missing (R2 brief P12)."""
+
+    from datetime import UTC, timedelta
+
+    from remy_finance.data.timeutil import et_date
+    from remy_finance.history.closes import needed_closes
+
+    data = _data_dir()
+    last = et_date(datetime.now(UTC)) - timedelta(days=1)
+    needed = needed_closes(data, last)
+    store = _close1()
+    plain = store.stored
+    missing = sorted(k for k in needed if plain.official_close(*k) is None)
+    typer.echo(f"CLOSE-1 coverage through {last}: {len(needed) - len(missing)}/{len(needed)}")
+    if fill and missing:
+        for sym, d in missing:
+            store.official_close(sym, d)
+        missing = sorted(k for k in needed if plain.official_close(*k) is None)
+        typer.echo(f"  filled {store.stats.filled} from ThetaData; still missing {len(missing)}")
+    for sym, d in missing[:30]:
+        typer.echo(f"  missing {sym} {d}")

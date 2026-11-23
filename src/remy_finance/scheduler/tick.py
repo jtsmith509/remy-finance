@@ -13,6 +13,11 @@ Each tick works out from the XNYS calendar (in ET) what is due and does it:
 2. **Expiration settlement** of any position whose official close is public.
 3. After 17:30 ET on the latest session: the **nightly export** (pushed to the
    ``registry-export`` checkout, if configured) and the **backup**, once per session.
+4. Then the **nightly HIST-1 / CLOSE-1 update** (DR-0046): closes, yields, events and ATM
+   IV over the last sessions, for the base names plus every tracked name (open positions,
+   unexpired forecast targets; EVAL-2 §6.3). Never between 08:00 and 17:30 ET on a session
+   day; retried hourly, at most three times a night, and the next night's window retries
+   anything still missing.
 
 A lock makes overlapping ticks exit at once. Steps are idempotent, and daily markers only
 save work. A failing step writes a failure record and a macOS notification, and the tick
@@ -29,6 +34,7 @@ from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 from enum import StrEnum
 from pathlib import Path
+from typing import Any
 
 from remy_finance.core import MarketState, Mode, Session
 from remy_finance.data.protocol import OfficialCloseSource
@@ -38,6 +44,7 @@ from remy_finance.registry.store import export_lock
 from remy_finance.scheduler.ops import DirtyTreeError, Markers, push_export, record_failure
 from remy_finance.scheduler.pipeline import Pipeline
 from remy_finance.scheduler.runlog import RunLogStore
+from remy_finance.scheduler.tracked import forecast_targets
 from remy_finance.snapshots.schedule import (
     PROSPECTIVE_MAX_DELAY,
     SnapshotKind,
@@ -68,6 +75,15 @@ def _replace_text(path: Path, text: str) -> None:
 
 
 NIGHTLY_HHMM = (17, 30)
+HIST_QUIET_FROM = (8, 0)  # no nightly HIST-1 work from 08:00 ET until NIGHTLY_HHMM
+HIST_ATTEMPTS = 3
+HIST_RETRY = timedelta(minutes=60)
+
+
+def _no_tracked(day: date) -> frozenset[str]:
+    """Board-tracked names (open shadow-panel positions, EVAL-2 §6.3a): none until the
+    shadow panel exists."""
+    return frozenset()
 
 
 class Slot(StrEnum):
@@ -80,14 +96,17 @@ class Slot(StrEnum):
 class Tick:
     data_dir: Path
     # A prospective board (as_of stamped after the fetch) of the UNIV-1 members plus the
-    # held names given (DR-0039).
-    capture: Callable[[Session, frozenset[str]], MarketState]
+    # held names (DR-0039) and the tracked names (DR-0046) given.
+    capture: Callable[[Session, frozenset[str], frozenset[str]], MarketState]
     closes: OfficialCloseSource
     clock: Callable[[], datetime]
     commit: Callable[[], str]  # raises DirtyTreeError
     notify: Callable[[str, str], None]
     export_repo: Path | None = None
     push: Callable[[Path, date, int], str] = push_export
+    # The nightly HIST-1 update: (session, tracked names) -> a BuildSummary (DR-0046).
+    hist_nightly: Callable[[date, frozenset[str]], Any] | None = None
+    board_tracked: Callable[[date], frozenset[str]] = _no_tracked
     actions: list[str] = field(default_factory=list)
 
     # ------------------------------------------------------------------ plumbing
@@ -178,7 +197,7 @@ class Tick:
         if now < start:
             return Slot.PENDING, None
         try:
-            board = self.capture(session, self.pipeline.held(day))
+            board = self.capture(session, self.pipeline.held(day), self.board_tracked(day))
             self.store.write(
                 board,
                 kind=kind,
@@ -358,3 +377,43 @@ class Tick:
                 dest = registry.backup(self.data_dir / "backup", now=now)
                 self.markers.mark(day, "backup", dest.name)
                 self.log(f"backup {day}: {dest.name}")
+        self._hist(day, today, now)
+
+    def _hist(self, day: date, today: date, now: datetime) -> None:
+        if self.hist_nightly is None or self.markers.done(day, "hist"):
+            return
+        if is_session(today) and et_at(today, *HIST_QUIET_FROM) <= now < et_at(
+            today, *NIGHTLY_HHMM
+        ):
+            return  # never near session hours: the tick lock would delay the captures
+        path = self.data_dir / "scheduler" / "hist-attempts" / f"{day.isoformat()}.txt"
+        tries = (
+            [datetime.fromisoformat(x) for x in path.read_text(encoding="utf-8").split()]
+            if path.exists()
+            else []
+        )
+        if tries and now - tries[-1] < HIST_RETRY:
+            return
+        if len(tries) >= HIST_ATTEMPTS:
+            note = f"gave up after {len(tries)} attempts; the next nightly window retries"
+            self.markers.mark(day, "hist", note)
+            self.notify("REMY scheduler", f"HIST-1 nightly {day}: {note}")
+            self.log(f"HIST-1 nightly {day}: {note}")
+            return
+        _replace_text(path, "".join(f"{t.isoformat()}\n" for t in [*tries, now]))
+        with self.guard("hist-nightly"):
+            runs = RunLogStore(self.data_dir / "runs")
+            tracked = self.pipeline.held(day) | forecast_targets(runs, Mode.PROSPECTIVE, day)
+            s = self.hist_nightly(day, tracked)
+            # One name without a close (delisted, halted) is logged, not retried; most
+            # names without one means the vendor's end-of-day isn't out yet: retry.
+            absent_today = sum(1 for _, d in s.closes_absent if d == day)
+            problems = len(s.fetch_errors) + (absent_today * 2 > max(s.symbols, 1))
+            summary = (
+                f"closes +{s.closes_added}, IV +{s.iv_added} (missing {s.iv_missing}), "
+                f"events +{s.events_added}, conflicts {s.conflicts}, "
+                f"fetch errors {len(s.fetch_errors)}, closes absent {len(s.closes_absent)}"
+            )
+            self.log(f"HIST-1 nightly {day} ({len(tracked)} tracked): {summary}")
+            if problems == 0:
+                self.markers.mark(day, "hist", summary)
