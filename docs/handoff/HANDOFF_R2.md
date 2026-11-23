@@ -1,6 +1,6 @@
 # REMY Finance — build brief: stage R2 (classical stochastic baseline)
 
-**Status: APPROVED by Josh, 2026-11-21.** This is the governing brief for R2. It incorporates the scoping answers (§11), P1–P14 (§2, 2026-11-20) and Codex's plan review (B01–B14, §12). EXIT-1's target is valued at the bid.
+**Status: APPROVED by Josh, 2026-11-21.** This is the governing brief for R2. It incorporates the scoping answers (§11), P1–P14 (§2, 2026-11-20) and Codex's plan review (B01–B14, §12). EXIT-1's target is valued at the bid. **Amended by DR-0044 (2026-11-23):** wherever this brief says VIX, read `SPYIV30` (SPY's own 30-day ATM IV). Rate history comes from Massive. A name needs 3 years of history before the R2 engines consider it.
 **Owner:** Josh Smith · **Repo:** `github.com/jtsmith509/remy-finance` · **Drafted:** 2026-11-20 by Claude, from Josh's answers to the R2 scoping questions (§11)
 **Governing spec:** `docs/spec/spec_v0.5.md` §13 (R2 is marked *proposed* there). Where this brief and the spec disagree, stop and ask.
 **Builds on:** R0–R1 (complete; `docs/memos/R0-result.md`, `docs/memos/R1-result.md`). The R0–R1 brief's ground rules, testing standards and conventions continue to apply unless this brief changes them.
