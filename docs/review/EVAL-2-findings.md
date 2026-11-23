@@ -12,14 +12,14 @@
 ## E01: how the replacement test was chosen
 1. **The first study:** three candidate procedures (a moving block bootstrap, a stationary bootstrap, and a Bartlett HAC test with fixed-b critical values), simulated by independent agents.
    - **A flaw in my design:** an audit found that the synthetic design I specified had **no cross-week covariance** (the week loading had mean zero), so it couldn't test E01.
-   - **What the stress design showed:** with a persistent common loading added, the naive week bootstrap rejected a true null 12–36% of the time at a nominal 5%.
+   - **What the stress design showed:** with a persistent common loading added, the naive week bootstrap rejected a true null 12–36% of the time at a nominal 5%, whenever boards in overlapping holds shared a common loading.
    - **The candidates also failed:** both block bootstraps were liberal (10–25%), and so was the Bartlett test (up to 11%).
 2. **The auditor proposed an EWC HAC t-test.** I then had it **blind-reproduced** by three independent implementations, plus a 100,000-replication reference. All agreed within Monte Carlo error. Size at a nominal 5%:
 
    | K | Holds of up to 8 weeks | Holds of up to 12 weeks |
    |---|---|---|
-   | ⌊W/10⌋ | ≤ 6.3% | up to 7.7% |
-   | ⌊W/12⌋ | 4.3–5.8% | ≤ 6.6% |
+   | ⌊W/10⌋ | ≤ 6.6% (6.3% if μ ≤ 1) | up to 8.2% (7.7% if μ ≤ 1) |
+   | ⌊W/12⌋ | 4.3–6.0% (5.8% if μ ≤ 1) | ≤ 7.0% (6.6% if μ ≤ 1) |
    | ⌊W/8⌋ | worse everywhere | worse everywhere |
 
 3. **Josh chose K = ⌊W/12⌋ with a minimum K of 3,** because an unfilled exit can retry to expiry, up to 60 days.
@@ -39,6 +39,24 @@
 | E10 | major | Power optimistic | Redone with t_K and W = 43 (about 27 points at year 1, about 13 at year 2), plus simulated power and dependence scenarios (§9) |
 | E11 | minor | Defect sensitivities underspecified | Trade-level and board-level sensitivity rules; corrected values primary (§4.4) |
 | E12 | minor | FAC-1 S_T/F observation unit | Every eligible name and expiration per board, with forward, target and units rules (§7.1) |
+
+## Pre-freeze adversarial check of revision 2 (2026-11-23)
+
+- **Method:** three independent reviewers, on consistency, forking paths and implementability, proposed 50 issues. Each was then given to a separate skeptic told to refute it, and **36 survived**. All 36 are folded into **revision 3**.
+- **Josh decided five:**
+  - P1 and P2 test the **v3 cohort only**;
+  - FAC-1's forecasts take **one extra path step to the close**;
+  - sd_h uses **overlapping (h+1)-session** changes;
+  - names with open shadow positions or targets **keep being captured** (tracked-only);
+  - a **late-receipt run counts as a failure.**
+- **The rest close remaining ambiguity:**
+  - **Version and enrolment:** the version-change definition and DR; the truncated-window rule; ISO-week indexing; the anniversary date rule and cutoff state; the scheduled-slot definition.
+  - **Failures and coverage:** the reason-2 definition and run-status record; the coverage ratio F/D; RAND-L1's valid-forecast, failure and null rules.
+  - **Panel and forecasts:** the eligible-set base population and eligible names; the panel's expiration and IV fallback; the late-forecast rule; shadow capture; IV record fields and levels; the CLOSE-1 source for S_T/F.
+  - **Statistics:** interval estimability; the bootstrap generator; the EVAL-1 §4 amendment.
+  - **Numbers:** corrected evidence figures (size 4.3–6.0%, ≤ 7.0% at 12-week holds, naive bootstrap 12–36%), and power on 44 and 96 weeks.
+  - **Evidence:** the archived blind reproductions A and C and the evidence README.
+- **I verified every corrected number against the archived JSON.**
 
 ---
 
