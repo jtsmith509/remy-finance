@@ -33,7 +33,7 @@
   - REGISTRY-1 databases still open and work unchanged; they just record no statuses. `remy doctor` warns until they are migrated.
 - **The migration** (`remy registry migrate`, both registries by default):
   1. take the scheduler's tick lock;
-  2. verify the registry, with the export for the prospective one, and refuse to migrate on any problem;
+  2. verify the registry, with the export for the prospective one, and refuse to migrate on any problem. The export directory is `--export-dir`, which defaults to `REMY_EXPORT_REPO`; if it's missing the command refuses rather than skipping the check, unless `--no-export-check` is given. It also refuses if there's no prospective registry;
   3. take a backup;
   4. in one transaction: drop and recreate the three meta guards around one schema update and one `migrated` row, create `run_status` and its triggers;
   5. verify again, and check that the recommendation and journal chain heads are unchanged.
@@ -43,13 +43,17 @@
   - **`failed`:** the engine raised. Each engine runs inside its own try block, so a failure is recorded with its exception type and message, and the next engine still runs. A movegen failure is shared, so every engine on that board fails with the same error, and movegen runs once.
   - **`skipped`:** the decision board wasn't captured (a gap); the code tree was dirty (DR-0033 §4); or the session was reconciled late because the scheduler wasn't running in its window.
   - **`not_scheduled`:** an engine listed as not scheduled for the slot, with its reason. None in R1; R2 engines use this before their start.
-  - **Each failure** also gets a failure record and a notification, and the other engines' picks stand.
-  - **A crash** between writing a run log and its status is repaired on the re-run: the status is recorded from the stored run log.
+  - **Each failure** also gets a failure record and a notification, and the other engines' picks stand. A failed status write counts as that engine's failure; it never stops another engine.
+  - **Repair:** each tick after the recommend step, an engine with no status is recorded from its run log, or as `failed` ("the run was interrupted") if it has none. When a slot is skipped (a dirty tree, or reconciled late), an engine that has a run log for the board is recorded from it, never as `skipped`.
 - **Not stored as statuses, but derived as EVAL-2 says:**
   - late receipt (reason 2(e)), from each recommendation's receipt time against the execution board;
   - no accepted fit (reason 2(c)), from the fit-vintage records.
-- **Replay** records statuses too, in the replay registry, through the same pipeline.
+- **Replay** records statuses too, in the replay registry, through the same pipeline. It refuses a REGISTRY-1 registry. On an engine failure it stops, as before, and records no `failed` status, because a resumed replay re-runs that engine.
+- **A handle opened before the migration** follows it. `verify` reports a migrated database set back to REGISTRY-1, and duplicate status keys.
 - **`remy registry statuses`** lists counts by engine and status, and the latest slots.
+
+## Review (2026-11-23)
+An internal adversarial review found 6 defects and some missing tests, all fixed with regression tests: see `docs/review/run-status-findings.md`.
 
 ## Consequences
 - **The R2 coverage rule** can be computed from the registry alone. Missing statuses are visible, and are counted as failures.

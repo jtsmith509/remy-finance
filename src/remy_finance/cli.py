@@ -504,51 +504,75 @@ def registry_annotate(
 @registry_app.command("migrate")
 def registry_migrate(
     mode: Annotated[str, typer.Option(help="prospective, replay or both")] = "both",
-) -> None:
+    export_dir: Annotated[
+        Path | None,
+        typer.Option(help="The registry-export checkout; default REMY_EXPORT_REPO"),
+    ] = None,
+    no_export_check: Annotated[
+        bool,
+        typer.Option("--no-export-check", help="Migrate the prospective registry without "
+                     "checking it against its export (not recommended)"),
+    ] = False,
+) -> None:  # fmt: skip
     """Upgrade REGISTRY-1 databases to REGISTRY-2, adding the run-status table (DR-0047).
 
-    Holds the scheduler's tick lock throughout, verifies first (with the export for the
-    prospective registry), takes a backup, migrates in one transaction, then verifies
+    Holds the scheduler's tick lock throughout, verifies first (the prospective registry
+    against its export too), takes a backup, migrates in one transaction, then verifies
     again and checks that the recommendation and journal chain heads are unchanged."""
     import fcntl
 
     from remy_finance.registry import Registry, registry_path
 
-    data = _data_dir()
+    data = _data_dir().resolve()
     modes = [Mode.PROSPECTIVE, Mode.REPLAY] if mode == "both" else [_mode(mode)]
+    export = export_dir or _export_repo()
+    export_missing = export is None or not export.exists()
+    if Mode.PROSPECTIVE in modes and not no_export_check and export_missing:
+        typer.echo(
+            f"the prospective registry is checked against its export, but "
+            f"{export or 'REMY_EXPORT_REPO (unset)'} doesn't exist: pass --export-dir "
+            "~/remy-registry-export (or --no-export-check)"
+        )
+        raise typer.Exit(1)
+    if Mode.PROSPECTIVE in modes and not registry_path(data, Mode.PROSPECTIVE).exists():
+        typer.echo(f"no prospective registry under {data}: check REMY_DATA_DIR")
+        raise typer.Exit(1)
     lock = data / "scheduler" / "tick.lock"
     lock.parent.mkdir(parents=True, exist_ok=True)
+    typer.echo(f"data {data}; waiting for the scheduler tick lock {lock} ...")
     failed = False
     with lock.open("a") as fh:
-        typer.echo("waiting for the scheduler tick lock ...")
         fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
         for m in modes:
+            name = m.value.lower()
             path = registry_path(data, m)
             if not path.exists():
-                typer.echo(f"{m.value.lower()}: no registry at {path}; nothing to migrate")
+                typer.echo(f"{name}: no registry at {path}; nothing to migrate")
                 continue
-            export = _export_repo() if m is Mode.PROSPECTIVE else None
-            export = export if export is not None and export.exists() else None
+            exp = export if m is Mode.PROSPECTIVE and not no_export_check else None
             with Registry.open(path, m) as reg:
-                before = reg.verify(export_dir=export)
+                before = reg.verify(export_dir=exp)
                 if not before.ok:
-                    typer.echo(f"{m.value.lower()}: verification failed, not migrating:")
+                    typer.echo(f"{name}: verification failed, not migrating:")
                     for problem in before.problems[:10]:
                         typer.echo(f"  FAIL {problem}")
                     failed = True
                     continue
                 if reg.has_run_status:
-                    typer.echo(f"{m.value.lower()}: already {reg.schema}")
+                    typer.echo(f"{name}: already {reg.schema}")
                     continue
+                typer.echo(
+                    f"{name}: verified; exported rows checked {before.exported_rows_checked}"
+                )
                 dest = reg.backup(data / "backup")
-            typer.echo(f"{m.value.lower()}: backup written: {dest}")
+            typer.echo(f"{name}: backup written: {dest}")
             Registry.migrate(path)
             with Registry.open(path, m) as reg:
-                after = reg.verify(export_dir=export)
+                after = reg.verify(export_dir=exp)
                 same = all(after.heads[t] == before.heads[t] for t in before.heads)
                 verdict = "OK" if after.ok else "FAILED"
                 typer.echo(
-                    f"{m.value.lower()}: now {reg.schema}; verify {verdict}; "
+                    f"{name}: now {reg.schema}; verify {verdict}; "
                     f"chain heads {'unchanged' if same else 'CHANGED'}; "
                     f"exported rows checked {after.exported_rows_checked}"
                 )

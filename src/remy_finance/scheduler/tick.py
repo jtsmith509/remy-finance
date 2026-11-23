@@ -330,6 +330,10 @@ class Tick:
                 self.log(f"{session.value}: recommendations skipped (dirty tree)")
             else:
                 self._recommend(day, session, decision)
+        if decision is not None and self.markers.done(day, f"{key}-recommend"):
+            with self.guard(f"{key}-status"):  # repair a status a failed write left out
+                if repaired := self.pipeline.ensure_statuses(decision):
+                    self.log(f"{session.value}: {repaired} run statuses repaired")
 
         exec_start = snapshot_time(day, session, SnapshotKind.EXECUTION)
         if decision is not None:

@@ -133,9 +133,17 @@ class ReplayDriver:
         store = SnapshotStore(self.data_dir / "snapshots")
         reg = Registry.open_or_create(registry_path(self.data_dir, Mode.REPLAY), Mode.REPLAY)
         try:
+            if not reg.has_run_status:
+                raise RuntimeError(
+                    f"{reg.path} is {reg.schema}: run `remy registry migrate --mode replay` "
+                    "first, so the replay records run statuses (DR-0047)"
+                )
             p = Pipeline(
                 reg, RunLogStore(self.data_dir / "runs"), self.code_commit, lambda: _never()
             )
+            # Replay stops on an engine failure, as before DR-0047, and records no FAILED
+            # status: a resumed replay re-runs that engine and records what it does then.
+            p.record_failures = False
             d = start if is_session(start) else next_session(start)
             while True:
                 in_range = d <= end
@@ -176,6 +184,11 @@ class ReplayDriver:
                 p.clock = _fixed(decision.as_of + RECEIPT_DELAY)
                 t0 = time.perf_counter()
                 picks = p.recommend(decision)
+                if p.failures:
+                    engine, err = p.failures[0]
+                    raise RuntimeError(
+                        f"{d} {session.value}: {engine} failed: {type(err).__name__}: {err}"
+                    ) from err
                 summary.recommended += len(picks)
                 for line in p.timings:
                     self.log(f"{line}; recommend total {time.perf_counter() - t0:.0f}s")

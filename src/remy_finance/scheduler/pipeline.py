@@ -43,6 +43,17 @@ from remy_finance.snapshots.schedule import SnapshotKind, snapshot_time
 Baseline = Callable[..., tuple[list[Recommendation], BaselineRun]]
 BASELINES: tuple[tuple[str, Baseline], ...] = (("MKT-1", run_mkt1), ("RAND-1", run_rand1))
 ENGINE_VERSIONS = {"MKT-1": MKT_1.engine_version, "RAND-1": RAND_1.engine_version}
+STATUS_REPAIR_REASON = "no run log and no status recorded (the run was interrupted)"
+
+
+@dataclass
+class _Shared:
+    """Work shared by the engines on one board: movegen, scoring, or movegen's error."""
+
+    candidates: tuple[Candidate, ...] | None = None
+    digest: str | None = None
+    score: BoardScore | None = None
+    error: Exception | None = None
 
 
 @dataclass
@@ -56,6 +67,9 @@ class Pipeline:
     # Engines not scheduled, with the reason (EVAL-2 §4.3 not_scheduled); none in R1.
     disabled: dict[str, str] = field(default_factory=dict)
     failures: list[tuple[str, Exception]] = field(default_factory=list)
+    # Replay is resumable and re-runs a failed engine, so it records no FAILED status and
+    # stops instead (DR-0047); the prospective scheduler never retries a slot.
+    record_failures: bool = True
 
     def __post_init__(self) -> None:
         self.engine = PaperEngine(self.registry)
@@ -70,62 +84,72 @@ class Pipeline:
         """Run every baseline on ``board``; return the trade IDs selected (new or not).
 
         Each engine runs and records its run status independently (EVAL-2 §4.3, DR-0047):
-        one engine's failure never stops another. Failures are returned in
-        ``self.failures`` (engine, exception) for the caller to record and notify."""
+        one engine's failure, or a failure to write its status, never stops another.
+        Failures are returned in ``self.failures`` (engine, exception) for the caller to
+        record and notify."""
         if board.mode is not self.mode:
             raise ValueError(f"{board.mode.value} board in the {self.mode.value} pipeline")
         day = et_date(board.as_of)
-        candidates: tuple[Candidate, ...] | None = None
-        score: BoardScore | None = None
-        list_digest: str | None = None
-        movegen_error: Exception | None = None
+        shared = _Shared()
         selected: list[str] = []
         self.failures = []
         for name, runner in BASELINES:
             if name in self.disabled:
-                self.record_status(day, board.session, name, RunStatusKind.NOT_SCHEDULED,
-                                   self.disabled[name], board=board)  # fmt: skip
-                continue
-            done = self.runs.find(
-                self.mode, board.session, name, board.snapshot_id, day.isoformat()
-            )
-            if done is not None:  # already run: make sure its status is recorded too
-                log = self.runs.load(done)
-                selected += log.selected
-                self._record_run(board, log)
+                self._guarded(name, lambda n=name: self.record_status(  # type: ignore[misc]
+                    day, board.session, n, RunStatusKind.NOT_SCHEDULED, self.disabled[n],
+                    board=board))  # fmt: skip
                 continue
             try:
-                if movegen_error is not None:
-                    raise movegen_error
-                if candidates is None:
-                    try:
-                        candidates, list_digest, score = self._candidates(board, day)
-                    except Exception as e:  # shared: every engine on this board fails
-                        movegen_error = e
-                        raise
-                excluded = underlyings_picked_today(self.registry, name, day, before=board.as_of)
-                recs, log = runner(
-                    board,
-                    candidates,
-                    code_commit=self.code_commit,
-                    receipt_time=self.clock(),
-                    excluded_underlyings=excluded,
-                    score=score,
-                    candidates_hash=list_digest,
-                )
-                for rec in recs:
-                    if self.registry.recommendation(rec.trade_id) is None:
-                        self.registry.add_recommendation(rec)
-                    self.engine.submit(rec.trade_id, self.clock())
-                self.runs.write(self.mode, board.session, log)
+                log = self._run_engine(name, runner, board, day, shared)
             except Exception as e:
                 self.failures.append((name, e))
-                self.record_status(day, board.session, name, RunStatusKind.FAILED,
-                                   f"{type(e).__name__}: {e}", board=board)  # fmt: skip
+                if self.record_failures:
+                    self._guarded(name, lambda n=name, e=e: self.record_status(  # type: ignore[misc]
+                        day, board.session, n, RunStatusKind.FAILED,
+                        f"{type(e).__name__}: {e}", board=board))  # fmt: skip
                 continue
-            self._record_run(board, log)
             selected += log.selected
+            self._guarded(name, lambda log=log: self._record_run(board, log))  # type: ignore[misc]
         return selected
+
+    def _guarded(self, engine: str, write: Callable[[], object]) -> None:
+        """A status write that fails is reported as that engine's failure, never raised:
+        the other engines still run (Codex-style review EVAL2-01)."""
+        try:
+            write()
+        except Exception as e:
+            self.failures.append((engine, e))
+
+    def _run_engine(
+        self, name: str, runner: Baseline, board: MarketState, day: date, shared: _Shared
+    ) -> BaselineRun:
+        done = self.runs.find(self.mode, board.session, name, board.snapshot_id, day.isoformat())
+        if done is not None:  # already run: its status is recorded from the log
+            return self.runs.load(done)
+        if shared.error is not None:
+            raise shared.error
+        if shared.candidates is None:
+            try:
+                shared.candidates, shared.digest, shared.score = self._candidates(board, day)
+            except Exception as e:  # shared: every engine on this board fails with it
+                shared.error = e
+                raise
+        excluded = underlyings_picked_today(self.registry, name, day, before=board.as_of)
+        recs, log = runner(
+            board,
+            shared.candidates,
+            code_commit=self.code_commit,
+            receipt_time=self.clock(),
+            excluded_underlyings=excluded,
+            score=shared.score,
+            candidates_hash=shared.digest,
+        )
+        for rec in recs:
+            if self.registry.recommendation(rec.trade_id) is None:
+                self.registry.add_recommendation(rec)
+            self.engine.submit(rec.trade_id, self.clock())
+        self.runs.write(self.mode, board.session, log)
+        return log
 
     def _candidates(
         self, board: MarketState, day: date
@@ -149,9 +173,9 @@ class Pipeline:
 
     # ------------------------------------------------------------------ run status
 
-    def _record_run(self, board: MarketState, log: BaselineRun) -> None:
+    def _record_run(self, board: MarketState, log: BaselineRun) -> bool:
         kind = RunStatusKind.OK if log.selected else RunStatusKind.NULL
-        self.record_status(
+        return self.record_status(
             et_date(board.as_of),
             board.session,
             log.engine,
@@ -200,10 +224,14 @@ class Pipeline:
         self, day: date, session: Session, reason: str, board: MarketState | None = None
     ) -> int:
         """Every engine skipped on a slot (a decision gap, a dirty tree, a session
-        reconciled late). Engines not scheduled are recorded as such."""
+        reconciled late). An engine with a run log for the board ran (e.g. before a crash)
+        and is recorded from it; engines not scheduled are recorded as such."""
         n = 0
         for name, _ in BASELINES:
-            if name in self.disabled:
+            log = self._run_log(name, board)
+            if log is not None:
+                n += self._record_run(board, log)  # type: ignore[arg-type]
+            elif name in self.disabled:
                 n += self.record_status(day, session, name, RunStatusKind.NOT_SCHEDULED,
                                         self.disabled[name], board=board)  # fmt: skip
             else:
@@ -211,6 +239,36 @@ class Pipeline:
                     day, session, name, RunStatusKind.SKIPPED, reason, board=board
                 )
         return n
+
+    def ensure_statuses(self, board: MarketState) -> int:
+        """Repair a slot whose recommendations ran but some status wasn't written (a status
+        write failed, or the process died): an engine with a run log is recorded from it;
+        one without is recorded as failed. Idempotent (first status wins)."""
+        if not self.registry.has_run_status:
+            return 0
+        day = et_date(board.as_of)
+        n = 0
+        for name, _ in BASELINES:
+            if self.registry.run_status(status_key(day, board.session, name)) is not None:
+                continue
+            log = self._run_log(name, board)
+            if log is not None:
+                n += self._record_run(board, log)
+            elif name in self.disabled:
+                n += self.record_status(day, board.session, name, RunStatusKind.NOT_SCHEDULED,
+                                        self.disabled[name], board=board)  # fmt: skip
+            else:
+                n += self.record_status(day, board.session, name, RunStatusKind.FAILED,
+                                        STATUS_REPAIR_REASON, board=board)  # fmt: skip
+        return n
+
+    def _run_log(self, engine: str, board: MarketState | None) -> BaselineRun | None:
+        if board is None:
+            return None
+        found = self.runs.find(
+            self.mode, board.session, engine, board.snapshot_id, et_date(board.as_of).isoformat()
+        )
+        return None if found is None else self.runs.load(found)
 
     def fill_entries(self, decision: MarketState, execution: MarketState | None) -> int:
         n = 0

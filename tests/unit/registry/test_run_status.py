@@ -183,3 +183,97 @@ def test_a_migrated_replay_registry_refuses_prospective_statuses(tmp_path: Path)
             reg.add_run_status(status())
         reg.add_run_status(status(mode=Mode.REPLAY))
         assert reg.verify().ok
+
+
+# ------------------------------------------------- review regressions (run-status review)
+
+
+def _raw(reg: Registry, key: str, text: str) -> None:
+    with reg._write() as conn:  # a well-chained row that bypasses add_run_status
+        S._insert(conn, "run_status", key, text)
+
+
+def test_verify_checks_run_status_records(tmp_path: Path) -> None:
+    """TESTS-03: the status key column, the mode, canonical JSON and validity."""
+    cases = {
+        "key": ("2026-11-24|OPEN|RAND-1", status().canonical_json()),
+        "mode": (status().status_key, status(mode=Mode.REPLAY).canonical_json()),
+        "canon": (status().status_key, status().canonical_json().replace(",", ", ", 1)),
+        "invalid": (status().status_key, '{"x":1}'),
+    }
+    for name, (key, text) in cases.items():
+        with Registry.create(tmp_path / f"{name}.sqlite", Mode.PROSPECTIVE) as reg:
+            _raw(reg, key, text)
+            assert not reg.verify().ok, name
+
+
+def test_verify_reports_a_duplicate_status_key(tmp_path: Path) -> None:
+    """INTEGRITY-2: a rebuilt table without UNIQUE and a second status for one slot."""
+    path = tmp_path / "r.sqlite"
+    with Registry.create(path, Mode.PROSPECTIVE) as reg:
+        reg.add_run_status(status())
+    c = sqlite3.connect(path, isolation_level=None)
+    guards = "\n".join(
+        p + " END;"
+        for p in S._trigger_sql(("run_status",)).split("END;")
+        if p.strip() and " ON run_status " in p
+    )
+    rows = c.execute("SELECT * FROM run_status").fetchall()
+    c.execute("DROP TABLE run_status")
+    c.execute(S._RUN_STATUS_SCHEMA.replace("TEXT NOT NULL UNIQUE", "TEXT NOT NULL"))
+    c.executemany("INSERT INTO run_status VALUES (?,?,?,?,?,?)", rows)
+    dup = status(RunStatusKind.FAILED).canonical_json()
+    prev = rows[-1][5]
+    c.execute(
+        "INSERT INTO run_status VALUES (2,?,?,?,?,?)",
+        (rows[0][1], dup, S.sha256_hex(dup), prev, S.chain_hash(prev, dup)),
+    )
+    c.executescript("BEGIN;" + guards + "COMMIT;")
+    c.close()
+    with Registry.open(path) as reg:
+        assert any("duplicate status" in p for p in reg.verify().problems)
+
+
+def test_insert_or_replace_on_an_existing_status_key_is_refused(tmp_path: Path) -> None:
+    """TESTS-05: the key clause of the insert trigger, at the right next seq."""
+    path = tmp_path / "r.sqlite"
+    with Registry.create(path, Mode.PROSPECTIVE) as reg:
+        row = reg.add_run_status(status())
+    assert row is not None
+    forged = status(RunStatusKind.FAILED).canonical_json()
+    with sqlite3.connect(path) as c, pytest.raises(sqlite3.DatabaseError):
+        c.execute(
+            "INSERT OR REPLACE INTO run_status VALUES (2, ?, ?, ?, ?, ?)",
+            (row.trade_id, forged, "x" * 64, row.chain_hash, S.chain_hash(row.chain_hash, forged)),
+        )
+
+
+def test_a_handle_opened_before_migration_follows_it(tmp_path: Path) -> None:
+    """OPS-2: a long-lived handle (a replay) sees the upgrade instead of 'meta altered'."""
+    path = tmp_path / "r.sqlite"
+    legacy_registry(path)
+    with Registry.open(path) as reg:
+        assert not reg.has_run_status
+        Registry.migrate(path)
+        assert reg.verify().ok
+        assert reg.has_run_status and reg.add_run_status(status()) is not None
+        assert reg.verify().ok
+
+
+def test_a_downgrade_to_registry_1_is_reported(tmp_path: Path) -> None:
+    """A migrated database set back to REGISTRY-1 to escape the run_status checks."""
+    path = tmp_path / "r.sqlite"
+    legacy_registry(path)
+    Registry.migrate(path)
+    with sqlite3.connect(path, isolation_level=None) as c:
+        c.executescript(
+            "BEGIN; DROP TRIGGER meta_no_update;"
+            "UPDATE meta SET value = 'REGISTRY-1' WHERE key = 'schema';"
+            + "\n".join(
+                p + " END;" for p in S._trigger_sql(()).split("END;") if "meta_no_update" in p
+            )
+            + "COMMIT;"
+        )
+    with Registry.open(path) as reg:
+        assert reg.schema == "REGISTRY-1"
+        assert any("downgraded" in p for p in reg.verify().problems)

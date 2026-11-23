@@ -81,3 +81,67 @@ def test_registry_migrate_backs_up_migrates_and_verifies(
     assert again.exit_code == 0 and "already REGISTRY-2" in again.output
     statuses = runner.invoke(cli.app, ["registry", "statuses"])
     assert statuses.exit_code == 0
+
+
+def _legacy_with_export(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[Path, Path]:
+    from tests.unit.registry.test_run_status import legacy_registry
+
+    monkeypatch.setenv("REMY_DATA_DIR", str(tmp_path))
+    export = tmp_path / "export"
+    monkeypatch.setenv("REMY_EXPORT_REPO", str(export))
+    path = registry_path(tmp_path, Mode.PROSPECTIVE)
+    path.parent.mkdir(parents=True)
+    legacy_registry(path)
+    with Registry.open(path) as reg:
+        reg.add_recommendation(recommendation())
+        reg.export(export, date(2026, 11, 24))
+    return path, export
+
+
+def test_migrate_refuses_a_registry_that_fails_verification(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """TESTS-04: a changed exported line: no backup, no migration, exit 1."""
+    path, export = _legacy_with_export(tmp_path, monkeypatch)
+    f = next(export.rglob("*.jsonl"))
+    f.write_text(f.read_text().replace('"seq":1', '"seq":1 ', 1))
+    r = runner.invoke(cli.app, ["registry", "migrate", "--mode", "prospective"])
+    assert r.exit_code == 1 and "verification failed, not migrating" in r.output, r.output
+    assert not list((tmp_path / "backup").glob("*"))
+    with Registry.open(path) as reg:
+        assert reg.schema == "REGISTRY-1"
+
+
+def test_migrate_fails_if_a_chain_head_changes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """TESTS-04: the heads-unchanged check."""
+    _legacy_with_export(tmp_path, monkeypatch)
+    real = Registry.migrate
+
+    def migrate_and_append(p: Path, now: object = None) -> bool:
+        out = real(p)
+        with Registry.open(p) as reg:
+            reg.add_recommendation(recommendation(quantity=3))
+        return out
+
+    monkeypatch.setattr(Registry, "migrate", staticmethod(migrate_and_append))
+    r = runner.invoke(cli.app, ["registry", "migrate", "--mode", "prospective"])
+    assert r.exit_code == 1 and "chain heads CHANGED" in r.output, r.output
+
+
+def test_migrate_needs_the_export_and_a_registry(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """OPS-1 and OPS-4: no silent skip of the export check, no silent success."""
+    _, export = _legacy_with_export(tmp_path, monkeypatch)
+    monkeypatch.delenv("REMY_EXPORT_REPO")
+    r = runner.invoke(cli.app, ["registry", "migrate"])
+    assert r.exit_code == 1 and "--export-dir" in r.output
+    r = runner.invoke(cli.app, ["registry", "migrate", "--export-dir", str(tmp_path / "typo")])
+    assert r.exit_code == 1
+    r = runner.invoke(cli.app, ["registry", "migrate", "--export-dir", str(export)])
+    assert r.exit_code == 0 and "exported rows checked 1" in r.output, r.output
+    monkeypatch.setenv("REMY_DATA_DIR", str(tmp_path / "elsewhere"))
+    r = runner.invoke(cli.app, ["registry", "migrate", "--export-dir", str(export)])
+    assert r.exit_code == 1 and "no prospective registry" in r.output

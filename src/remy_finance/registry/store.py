@@ -308,12 +308,22 @@ class Registry:
         finally:
             conn.close()
 
+    def _refresh_schema(self) -> None:
+        """A handle opened before ``migrate`` ran in another process follows the upgrade
+        (REGISTRY-1 to REGISTRY-2 only); any other change is left for ``verify`` to
+        report as tampering."""
+        if self.schema == LEGACY_SCHEMA:
+            row = self._conn.execute("SELECT value FROM meta WHERE key = 'schema'").fetchone()
+            if row is not None and row[0] == SCHEMA_VERSION:
+                self.schema = SCHEMA_VERSION
+
     @property
     def tables(self) -> tuple[Table, ...]:
         return TABLES if self.schema == SCHEMA_VERSION else TABLES_V1
 
     @property
     def has_run_status(self) -> bool:
+        self._refresh_schema()
         return self.schema == SCHEMA_VERSION
 
     @classmethod
@@ -523,9 +533,17 @@ class Registry:
             return self._verify(export_dir)
 
     def _verify(self, export_dir: Path | None) -> VerifyReport:
+        self._refresh_schema()
         report = VerifyReport(mode=self.mode)
         problems = report.problems
         meta = dict(self._conn.execute("SELECT key, value FROM meta").fetchall())
+        if self.schema == LEGACY_SCHEMA and (
+            "migrated" in meta
+            or self._conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'run_status'"
+            ).fetchone()
+        ):  # a REGISTRY-2 database set back to REGISTRY-1 to escape the run_status checks
+            problems.append("schema says REGISTRY-1 but the database was migrated (downgraded)")
         if meta.get("mode") != self.mode.value or meta.get("schema") != self.schema:
             problems.append(f"meta table altered: {meta}")
         if set(meta) - {"mode", "schema", "migrated"}:
@@ -546,6 +564,7 @@ class Registry:
                 problems.append(f"append-only trigger {name} has been altered")
 
         trade_ids: set[str] = set()
+        status_keys: set[str] = set()
         by_seq: dict[int, str] = {}
         histories: dict[str, list[JournalEvent]] = defaultdict(list)
         for table in self.tables:
@@ -563,6 +582,10 @@ class Registry:
                 if chain_hash(row.prev_chain, row.record_json) != row.chain_hash:
                     problems.append(f"{where}: chain_hash is wrong")
                 prev = row.chain_hash
+                if row.table == "run_status":
+                    if row.trade_id in status_keys:
+                        problems.append(f"{where}: duplicate status {row.trade_id}")
+                    status_keys.add(row.trade_id)
                 problems.extend(
                     f"{where}: {p}" for p in self._check_record(row, trade_ids, by_seq, histories)
                 )
