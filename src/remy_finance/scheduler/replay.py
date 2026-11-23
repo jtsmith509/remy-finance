@@ -65,6 +65,7 @@ class ReplayDriver:
     code_commit: str
     log: Callable[[str], None] = print
     last_day: date | None = None  # stop the tail here (the last day with data)
+    baselines: str = "3"  # MKT-1/RAND-1 version for every board of this replay (DR-0048)
 
     def _board(
         self,
@@ -144,6 +145,7 @@ class ReplayDriver:
             # Replay stops on an engine failure, as before DR-0047, and records no FAILED
             # status: a resumed replay re-runs that engine and records what it does then.
             p.record_failures = False
+            p.baselines = self.baselines
             d = start if is_session(start) else next_session(start)
             while True:
                 in_range = d <= end

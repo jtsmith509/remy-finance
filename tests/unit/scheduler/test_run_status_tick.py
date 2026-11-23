@@ -273,7 +273,7 @@ def test_failures_do_not_carry_into_the_next_slot_and_fields_are_set(
     assert "FAILED" not in (markers / f"{MON}-close-recommend.done").read_text()
     with registry(tmp_path) as reg:
         for s in reg.run_statuses():
-            assert s.engine_version == P.ENGINE_VERSIONS[s.engine]
+            assert s.engine_version == "3"  # before the cut-over (DR-0048)
 
 
 def test_skipped_statuses_carry_the_decision_board(tmp_path: Path) -> None:

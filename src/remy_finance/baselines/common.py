@@ -16,6 +16,7 @@ from remy_finance.core.exact import exact_decimal
 from remy_finance.core.types import Dec, UtcDatetime
 from remy_finance.data.timeutil import et_date
 from remy_finance.registry import (
+    ADJ_0,
     Quantile,
     Recommendation,
     Registry,
@@ -161,6 +162,7 @@ def build_recommendation(
     search_config: Sequence[tuple[str, str]] = (),
     random_seed: str | None = None,
     fill_reason: str = "baseline: probability of fill not modelled in R1",
+    ranking_adjustment: str = ADJ_0,
 ) -> Recommendation:
     s = candidate.structure
     assert s is not None
@@ -207,5 +209,6 @@ def build_recommendation(
         probability_of_fill_reason=fill_reason,
         exit_policy_id=candidate.exit_policy_id,
         random_seed=random_seed,
+        ranking_adjustment=ranking_adjustment,
         search_config=tuple(search_config),
     )

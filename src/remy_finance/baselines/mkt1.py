@@ -25,6 +25,14 @@ most expirations. A predicted mean above ``bug_signal_return`` now means a cross
 stale quote: logged in the run record and not selected.
 
 The volatility-risk-premium adjustment is OFF in R1 (``vrp_adjustment``): a hook for R2.
+
+**v4 (R2; DR-0048, from the cut-over):** the same fits and mid-anchored mean, plus
+- DR-0041 eligibility: a candidate whose best attainable net return is not above 0 (it can
+  only lose at executable prices) is not eligible; the run log counts the exclusions;
+- DR-0042 ranking (``ADJ-1``): rank on the predicted mean minus the risk-free return on
+  capital at risk over the trade's horizon, ``mean - (1 / DF - 1)``, with DF the
+  expiration's discount factor. The recorded forecast is unchanged; only the key changes.
+v3 behaves exactly as before; both versions live side by side until the cut-over.
 """
 
 from __future__ import annotations
@@ -63,7 +71,7 @@ from remy_finance.core.payoff import payoff_extremes
 from remy_finance.core.types import PosDec
 from remy_finance.data.timeutil import NEW_YORK
 from remy_finance.movegen.generator import list_hash
-from remy_finance.registry import ADJ_0, EVAL_1_BINS, Recommendation, ReturnBins
+from remy_finance.registry import ADJ_0, ADJ_1, EVAL_1_BINS, Recommendation, ReturnBins
 
 YEAR_SECONDS = 365.0 * 86400.0
 # EVAL-1 §6 / DR-0032: 15 levels for strategy returns; 17 for S_T / F.
@@ -97,6 +105,18 @@ class Mkt1Config(Record):
 
 
 MKT_1 = Mkt1Config()
+MKT_1_V4 = Mkt1Config(engine_version="4")  # DR-0041 eligibility + DR-0042 ADJ-1 (DR-0048)
+
+
+def r2_rules(cfg: Mkt1Config) -> bool:
+    """v4 and later apply DR-0041 eligibility and DR-0042 ADJ-1 ranking (DR-0048)."""
+    return int(cfg.engine_version) >= 4
+
+
+def can_only_lose(c: Candidate) -> bool:
+    """DR-0041: the best attainable net return (signed payoff max minus premium minus
+    fees, over capital at risk) is not above 0."""
+    return return_bounds(c)[1] <= 0
 
 
 @dataclass(frozen=True)
@@ -451,6 +471,7 @@ class Scored:
     candidate: Candidate
     mean: float
     index: int
+    key: float  # the ranking key: the mean (ADJ-0, v3) or the excess return (ADJ-1, v4)
 
 
 VrpHook = Callable[[ExpiryModel], ExpiryModel]
@@ -471,12 +492,15 @@ class BoardScore:
     scored: tuple[Scored, ...]  # in candidate order; bug signals excluded
     bug_signals: tuple[tuple[str, Decimal], ...]
     infeasible: int = 0  # anchored mean outside the attainable range (incoherent quotes)
+    cannot_win: int = 0  # v4: recommendable candidates that can only lose (DR-0041)
 
     @property
     def flags(self) -> tuple[str, ...]:
         out = ["AMERICAN_EXERCISE_PREMIUM_IGNORED"]
         if self.infeasible:
             out.append(f"INFEASIBLE_MEAN_SKIPPED:{self.infeasible}")
+        if r2_rules(self.cfg):
+            out.append(f"CANNOT_WIN_EXCLUDED:{self.cannot_win}")  # DR-0041, counted always
         return tuple(out)
 
     def model_for(self, c: Candidate) -> ExpiryModel:
@@ -506,6 +530,11 @@ def score_board(
     if cfg.vrp_adjustment != "OFF" or vrp_hook is not None:
         raise NotImplementedError("the volatility-risk-premium adjustment is R2 work")
     usable = [c for c in candidates if recommendable(c)]
+    cannot_win = 0
+    if r2_rules(cfg):  # DR-0041: dropped before fitting; movegen's list is unchanged
+        kept = [c for c in usable if not can_only_lose(c)]
+        cannot_win = len(usable) - len(kept)
+        usable = kept
     models: dict[tuple[str, date], ExpiryModel | None] = {}
     fits: list[ExpirationFit] = []
     for c in usable:
@@ -531,9 +560,17 @@ def score_board(
         if mean > float(cfg.bug_signal_return):  # now only a crossed or stale quote can do this
             bug_signals.append((c.content_hash(), to_decimal_places(mean, cfg.return_places)))
             continue
-        scored.append(Scored(c, mean, i))
+        rank_key = mean - (1.0 / model.df - 1.0) if r2_rules(cfg) else mean  # ADJ-1 (DR-0042)
+        scored.append(Scored(c, mean, i, rank_key))
     return BoardScore(
-        cfg, tuple(usable), models, tuple(fits), tuple(scored), tuple(bug_signals), infeasible
+        cfg,
+        tuple(usable),
+        models,
+        tuple(fits),
+        tuple(scored),
+        tuple(bug_signals),
+        infeasible,
+        cannot_win,
     )
 
 
@@ -564,7 +601,8 @@ def run_mkt1(
     hash between baselines (they must come from this board and these candidates)."""
     if score is None or score.cfg != cfg:
         score = score_board(board, candidates, cfg, vrp_hook)
-    ranked = sorted(score.scored, key=lambda s: (-s.mean, s.index))
+    ranked = sorted(score.scored, key=lambda s: (-s.key, s.index))
+    adj = ADJ_1 if r2_rules(cfg) else ADJ_0
     by_id = {id(s.candidate): s for s in ranked}
     picks = apply_caps((s.candidate for s in ranked), cfg.selection, excluded_underlyings)
     recs: list[Recommendation] = []
@@ -584,10 +622,12 @@ def run_mkt1(
                 method=MKT1_METHOD,
                 forecast=forecast,
                 search_config=(
-                    ("ranking_adjustment", ADJ_0),
+                    ("ranking_adjustment", adj),
                     ("selection", cfg.selection.version),
                     ("vrp_adjustment", cfg.vrp_adjustment),
+                    *((("eligibility", "DR-0041"),) if r2_rules(cfg) else ()),
                 ),
+                ranking_adjustment=adj,
             )
         )
     shortfall = shortfall_note(len(recs), cfg.selection.k, score, excluded_underlyings)

@@ -22,6 +22,7 @@ from remy_finance.core.exact import exact_decimal
 from remy_finance.core.types import Dec, NonNegDec, UtcDatetime
 
 ADJ_0 = "ADJ-0"  # no ranking adjustment in R1 (spec §9; uncertainty-adjusted ranking is later)
+ADJ_1 = "ADJ-1"  # rank on the predicted mean minus the risk-free return on capital (DR-0042)
 
 
 class Quantile(Record):

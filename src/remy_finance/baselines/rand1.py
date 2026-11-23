@@ -31,9 +31,11 @@ from remy_finance.baselines.common import (
 )
 from remy_finance.baselines.mkt1 import (
     MKT_1,
+    MKT_1_V4,
     BoardScore,
     Mkt1Config,
     Scored,
+    r2_rules,
     score_board,
     shortfall_note,
 )
@@ -50,6 +52,9 @@ class Rand1Config(Record):
 
 
 RAND_1 = Rand1Config()
+# DR-0048: v4 samples from MKT-1 v4's eligible set (DR-0041) and takes its forecasts. It
+# doesn't rank, so ADJ-1 doesn't apply to its picks.
+RAND_1_V4 = Rand1Config(engine_version="4", forecast_model=MKT_1_V4)
 
 
 def seed_for(snapshot_id: str, version: str = "RAND-1") -> str:
@@ -101,6 +106,7 @@ def run_rand1(
                     ("selection", cfg.selection.version),
                     ("sampling", "sha256(seed, candidate hash) order"),
                     ("forecast_model", f"{cfg.forecast_model.version}@{score.cfg.content_hash()}"),
+                    *((("eligibility", "DR-0041"),) if r2_rules(cfg.forecast_model) else ()),
                 ),
                 random_seed=seed,
             )

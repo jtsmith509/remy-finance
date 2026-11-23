@@ -616,6 +616,13 @@ def registry_backup(mode: ModeOpt = "prospective") -> None:
     typer.echo(f"backup written: {dest}")
 
 
+def _baseline_version(text: str) -> str:
+    version = text.strip().lower().removeprefix("v")
+    if version not in ("3", "4"):
+        raise typer.BadParameter("--baselines must be v3 or v4")
+    return version
+
+
 def _export_repo() -> Path | None:
     value = os.environ.get("REMY_EXPORT_REPO", "").strip()
     return Path(value) if value else None
@@ -827,6 +834,9 @@ def replay_run(
         bool, typer.Option(help="Keep managing and settling positions after END")
     ] = True,
     workers: Annotated[int, typer.Option(help="Symbols fetched concurrently")] = 4,
+    baselines: Annotated[
+        str, typer.Option(help="MKT-1/RAND-1 version: v3 (R1, the default) or v4 (DR-0048)")
+    ] = "v3",
 ) -> None:
     """Run the full R1 pipeline over [START, END] into the REPLAY registry (DR-0034).
 
@@ -872,6 +882,7 @@ def replay_run(
         code_commit=code_commit(REPO_DIR, require_clean=False),
         log=typer.echo,
         last_day=et_date(datetime.now(UTC)) - timedelta(days=1),
+        baselines=_baseline_version(baselines),
     )
     s = driver.run(date.fromisoformat(start), date.fromisoformat(end), tail=tail)
     typer.echo(

@@ -23,10 +23,11 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import date, datetime
+from typing import Any
 
 from remy_finance.baselines.common import BaselineRun, underlying_of, underlyings_picked_today
-from remy_finance.baselines.mkt1 import MKT_1, BoardScore, run_mkt1, score_board
-from remy_finance.baselines.rand1 import RAND_1, run_rand1
+from remy_finance.baselines.mkt1 import BoardScore, Mkt1Config, run_mkt1, score_board
+from remy_finance.baselines.rand1 import run_rand1
 from remy_finance.core import Candidate, MarketState, Mode, Session
 from remy_finance.core.canonical import sha256_hex
 from remy_finance.data.protocol import OfficialCloseSource
@@ -35,6 +36,7 @@ from remy_finance.data.view import official_close_as_of
 from remy_finance.execution.engine import PaperEngine
 from remy_finance.movegen.generator import generate, list_hash
 from remy_finance.registry import Recommendation, Registry, RunStatus, RunStatusKind, status_key
+from remy_finance.scheduler.cutover import BASELINE_CONFIGS, baseline_version
 from remy_finance.scheduler.held import held_underlyings
 from remy_finance.scheduler.runlog import RunLogStore
 from remy_finance.scheduler.tracked import not_recommendable
@@ -42,7 +44,6 @@ from remy_finance.snapshots.schedule import SnapshotKind, snapshot_time
 
 Baseline = Callable[..., tuple[list[Recommendation], BaselineRun]]
 BASELINES: tuple[tuple[str, Baseline], ...] = (("MKT-1", run_mkt1), ("RAND-1", run_rand1))
-ENGINE_VERSIONS = {"MKT-1": MKT_1.engine_version, "RAND-1": RAND_1.engine_version}
 STATUS_REPAIR_REASON = "no run log and no status recorded (the run was interrupted)"
 
 
@@ -50,6 +51,7 @@ STATUS_REPAIR_REASON = "no run log and no status recorded (the run was interrupt
 class _Shared:
     """Work shared by the engines on one board: movegen, scoring, or movegen's error."""
 
+    configs: dict[str, Any]
     candidates: tuple[Candidate, ...] | None = None
     digest: str | None = None
     score: BoardScore | None = None
@@ -70,6 +72,9 @@ class Pipeline:
     # Replay is resumable and re-runs a failed engine, so it records no FAILED status and
     # stops instead (DR-0047); the prospective scheduler never retries a slot.
     record_failures: bool = True
+    # The MKT-1/RAND-1 version ("3" or "4"): None follows the cut-over slot (prospective);
+    # a replay names it (DR-0048).
+    baselines: str | None = None
 
     def __post_init__(self) -> None:
         self.engine = PaperEngine(self.registry)
@@ -90,7 +95,7 @@ class Pipeline:
         if board.mode is not self.mode:
             raise ValueError(f"{board.mode.value} board in the {self.mode.value} pipeline")
         day = et_date(board.as_of)
-        shared = _Shared()
+        shared = _Shared(configs=self.configs(day, board.session))
         selected: list[str] = []
         self.failures = []
         for name, runner in BASELINES:
@@ -130,7 +135,9 @@ class Pipeline:
             raise shared.error
         if shared.candidates is None:
             try:
-                shared.candidates, shared.digest, shared.score = self._candidates(board, day)
+                shared.candidates, shared.digest, shared.score = self._candidates(
+                    board, day, shared.configs["MKT-1"]
+                )
             except Exception as e:  # shared: every engine on this board fails with it
                 shared.error = e
                 raise
@@ -138,6 +145,7 @@ class Pipeline:
         recs, log = runner(
             board,
             shared.candidates,
+            cfg=shared.configs[name],
             code_commit=self.code_commit,
             receipt_time=self.clock(),
             excluded_underlyings=excluded,
@@ -151,8 +159,12 @@ class Pipeline:
         self.runs.write(self.mode, board.session, log)
         return log
 
+    def configs(self, day: date, session: Session) -> dict[str, Any]:
+        """The baseline configs for a decision slot (DR-0048)."""
+        return BASELINE_CONFIGS[baseline_version(day, session, self.baselines)]
+
     def _candidates(
-        self, board: MarketState, day: date
+        self, board: MarketState, day: date, cfg: Mkt1Config
     ) -> tuple[tuple[Candidate, ...], str, BoardScore]:
         t0 = time.perf_counter()
         candidates, summary = generate(board)
@@ -164,7 +176,7 @@ class Pipeline:
             candidates = tuple(c for c in candidates if not c.legs or underlying_of(c) not in held)
             list_digest = list_hash(candidates)
         t1 = time.perf_counter()
-        score = score_board(board, candidates)  # shared: MKT-1 and RAND-1 (DR-0031)
+        score = score_board(board, candidates, cfg)  # shared: MKT-1 and RAND-1 (DR-0031)
         self.timings.append(
             f"{board.session.value} {day}: {len(candidates)} candidates, "
             f"movegen {t1 - t0:.0f}s, scoring {time.perf_counter() - t1:.0f}s"
@@ -209,7 +221,9 @@ class Pipeline:
             session=session,
             slot_time=snapshot_time(day, session, SnapshotKind.DECISION),
             engine=engine,
-            engine_version=log.engine_version if log is not None else ENGINE_VERSIONS.get(engine),
+            engine_version=log.engine_version
+            if log is not None
+            else getattr(self.configs(day, session).get(engine), "engine_version", None),
             status=kind,
             reason=reason[:500],
             snapshot_id=None if board is None else board.snapshot_id,
