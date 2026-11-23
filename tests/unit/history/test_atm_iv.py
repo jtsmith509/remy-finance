@@ -35,8 +35,9 @@ def test_exact_30_days_is_used_alone_and_spreads_do_not_bias() -> None:
 
 
 def test_no_bracket_is_missing_with_a_reason() -> None:
-    assert atm_iv30(chain(S, 100.0, {35: 0.2, 50: 0.2}), 100.0, S, rates()).reason == (
-        "NO_BRACKET_30D"
+    # No expiration either side of 30 days, and none 21-45 days out for the fallback.
+    assert atm_iv30(chain(S, 100.0, {50: 0.2, 60: 0.2}), 100.0, S, rates()).reason == (
+        "NO_BRACKET_OR_NEAREST_30D"
     )
     assert atm_iv30(chain(S, 100.0, {3: 0.2, 200: 0.2}), 100.0, S, rates()).reason == (
         "NO_VALID_EXPIRATION"
@@ -62,3 +63,15 @@ def test_vendor_rows_are_parsed_and_malformed_rows_skipped() -> None:
         "XYZ",
     )
     assert [(r.call, r.mid) for r in rows] == [(True, 1.05), (False, 2.1)]
+
+
+def test_nearest_expiry_fallback_when_only_one_side_exists() -> None:
+    """DR-0045 as amended (2026-11-23): monthly-only chains in expiration week."""
+    one_side = atm_iv30(chain(S, 100.0, {35: 0.25, 63: 0.3}), 100.0, S, rates())
+    assert one_side.iv30 == pytest.approx(0.25, abs=1e-4) and one_side.nearest
+    assert ("method", "nearest-expiry") in one_side.details()
+    assert [e.dte for e in one_side.used] == [35]
+    low_side = atm_iv30(chain(S, 100.0, {8: 0.4, 22: 0.22}), 100.0, S, rates())
+    assert low_side.iv30 == pytest.approx(0.22, abs=1e-4) and low_side.nearest
+    bracketed = atm_iv30(chain(S, 100.0, {14: 0.2, 45: 0.2}), 100.0, S, rates())
+    assert not bracketed.nearest and ("method", "nearest-expiry") not in bracketed.details()

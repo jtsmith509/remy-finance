@@ -135,6 +135,8 @@ class MassiveSource:
         self._sleep = sleep
         self._last_request = 0.0
         self._div_cache: dict[str, tuple[DividendEvent, ...]] = {}
+        self._div_rows: dict[str, list[dict[str, Any]]] = {}  # raw rows, for HIST-1
+        self._hist_divs: dict[str, tuple[DividendEvent, ...]] = {}
         self._action_cache: dict[str, tuple[CorporateAction, ...]] = {}
         self.skipped: list[str] = []
         # Structured forms of ``skipped`` for HIST-1 (DR-0045): (symbol, ex_date, reason)
@@ -193,12 +195,20 @@ class MassiveSource:
                 "/stocks/v1/dividends",
                 {"ticker": symbol, "limit": "5000", "sort": "ex_dividend_date.asc"},
             )
+            self._div_rows[symbol] = rows
             self._div_cache[symbol] = self._parse_dividends(symbol, rows)
         return self._div_cache[symbol]
 
     def _parse_dividends(
-        self, symbol: str, rows: list[dict[str, Any]]
+        self, symbol: str, rows: list[dict[str, Any]], *, keep_undeclared: bool = False
     ) -> tuple[DividendEvent, ...]:
+        """Massive dividend rows to ``DividendEvent``s.
+
+        ``keep_undeclared`` (HIST-1 only, DR-0045 as amended 2026-11-23): a USD dividend
+        with no declaration date is kept, public at 09:30 ET on its ex-date, which can't
+        look ahead (a dividend is declared before its ex-date). ASSIGN-1 keeps needing a
+        declaration date (DR-0027), so the default skips it. Only the HIST-1 parse records
+        ``unusable_dividends`` (non-USD)."""
         now = self._clock()
         out: list[DividendEvent] = []
         # A declaration date shared by several different ex-dates is a *schedule*
@@ -213,15 +223,22 @@ class MassiveSource:
         for r in rows:
             ex = r.get("ex_dividend_date")
             decl = r.get("declaration_date")
-            if not decl:
-                self.skipped.append(f"{symbol} ex {ex}: no declaration_date")
-                self._unusable(symbol, ex, "NO_DECLARATION_DATE")
-                continue
             if str(r.get("currency", "USD")) != "USD":
-                self.skipped.append(f"{symbol} ex {ex}: currency {r.get('currency')}")
-                self._unusable(symbol, ex, f"CURRENCY_{r.get('currency')}")
+                if keep_undeclared:
+                    self._unusable(symbol, ex, f"CURRENCY_{r.get('currency')}")
+                else:
+                    self.skipped.append(f"{symbol} ex {ex}: currency {r.get('currency')}")
                 continue
-            if len(ex_by_decl.get(str(decl), ())) > 1:
+            if not decl and not keep_undeclared:
+                self.skipped.append(f"{symbol} ex {ex}: no declaration_date")
+                continue
+            if not decl:
+                try:
+                    public = et_at(date.fromisoformat(str(ex)[:10]), 9, 30)
+                except ValueError:
+                    self._unusable(symbol, ex, "UNREADABLE_EX_DATE")
+                    continue
+            elif len(ex_by_decl.get(str(decl), ())) > 1:
                 public = et_at(date.fromisoformat(str(ex)), 9, 30)
                 self.schedule_declared.append(f"{symbol} ex {ex}: schedule declared {decl}")
             else:
@@ -235,12 +252,13 @@ class MassiveSource:
                     dividend_type=DividendType.ORDINARY
                     if dist in ORDINARY_DISTRIBUTIONS
                     else DividendType.SPECIAL,
-                    declaration_date=date.fromisoformat(decl),
+                    declaration_date=date.fromisoformat(decl) if decl else None,
                     pay_date=date.fromisoformat(r["pay_date"]) if r.get("pay_date") else None,
                     event_time=public,
                     public_time=public,
                     ingest_time=now,
-                    source="massive:stocks/v1/dividends",
+                    source="massive:stocks/v1/dividends"
+                    + ("" if decl else ";undeclared:public-at-ex-open"),
                 )
             )
         return tuple(sorted(out, key=lambda d: (d.ex_date, d.canonical_json())))
@@ -254,8 +272,14 @@ class MassiveSource:
     # ------------------------------------------------- raw history (HIST-1, DR-0045)
 
     def all_dividends(self, symbol: str) -> tuple[DividendEvent, ...]:
-        """Every parsed dividend, each with its own ``public_time`` (filter as of later)."""
-        return self._load_dividends(symbol)
+        """Every dividend for HIST-1, each with its own ``public_time`` (filter as of
+        later), including undeclared USD dividends public at their ex-date open."""
+        if symbol not in self._hist_divs:
+            if symbol not in self._div_rows:
+                self._load_dividends(symbol)
+            rows = self._div_rows.get(symbol, [])
+            self._hist_divs[symbol] = self._parse_dividends(symbol, rows, keep_undeclared=True)
+        return self._hist_divs[symbol]
 
     def all_actions(self, symbol: str) -> tuple[CorporateAction, ...]:
         """Every parsed split or ticker change, each with its own ``public_time``."""
@@ -387,6 +411,7 @@ class MassiveSource:
             )
             for sym in group:
                 mine = [r for r in div_rows if str(r.get("ticker")) == sym]
+                self._div_rows[sym] = mine
                 self._div_cache[sym] = self._parse_dividends(sym, mine)
                 splits = self._parse_splits(
                     sym, [r for r in split_rows if str(r.get("ticker")) == sym], now

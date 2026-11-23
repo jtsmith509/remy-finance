@@ -5,7 +5,8 @@ rate-implied discount factor, Black-76 implied vols from out-of-the-money mids, 
 expiry measured from the 16:00 ET close. Per expiration, total variance w = vol^2 * T is
 interpolated linearly in log-moneyness to the forward (k = 0); across expirations, w is
 interpolated linearly in T to 30 days. No extrapolation: without valid expirations on both
-sides of 30 days the value is missing, with its reason.
+sides of 30 days, the nearest valid expiration 21-45 days out is used alone and flagged
+(DR-0045 as amended 2026-11-23); with none, the value is missing, with its reason.
 """
 
 from __future__ import annotations
@@ -25,6 +26,13 @@ from remy_finance.data.timeutil import NEW_YORK
 TARGET_DAYS = 30
 MIN_DTE = 7
 MAX_DTE = 120
+# DR-0045 as amended (2026-11-23): with valid expirations on one side of 30 days only, the
+# nearest one 21-45 days out is used alone and flagged ("nearest-expiry"). Bracketed
+# values are unchanged. ``NO_BRACKET_30D`` is the reason the method recorded before this
+# fallback existed, so those sessions are derived again; a failure now has its own reason.
+NEAREST_MIN_DTE, NEAREST_MAX_DTE = 21, 45
+LEGACY_RETRY_REASONS = frozenset({"NO_BRACKET_30D"})
+NO_BRACKET_OR_NEAREST = "NO_BRACKET_OR_NEAREST_30D"
 
 
 @dataclass(frozen=True)
@@ -63,10 +71,13 @@ class IVResult:
     reason: str = ""
     used: list[ExpiryIV] = field(default_factory=list)
     rejected: dict[str, str] = field(default_factory=dict)  # expiration -> reason
+    nearest: bool = False  # the nearest-expiry fallback, not a bracket
 
     def details(self) -> tuple[tuple[str, str], ...]:
         out = [(f"exp:{e.expiration}", f"dte={e.dte};F={e.forward:.6g};iv={e.atm_iv:.6g}")
                for e in self.used]  # fmt: skip
+        if self.nearest:
+            out.append(("method", "nearest-expiry"))
         return tuple(sorted(out))
 
 
@@ -173,7 +184,15 @@ def atm_iv30(
         res.iv30 = math.sqrt(e.total_variance / e.years)
         return res
     if not lower or not upper:
-        res.reason = "NO_BRACKET_30D" if valid else "NO_VALID_EXPIRATION"
+        if not valid:
+            res.reason = "NO_VALID_EXPIRATION"
+            return res
+        near = [e for e in valid if NEAREST_MIN_DTE <= e.dte <= NEAREST_MAX_DTE]
+        if not near:
+            res.reason = NO_BRACKET_OR_NEAREST
+            return res
+        e = min(near, key=lambda x: (abs(x.dte - TARGET_DAYS), x.dte))
+        res.used, res.nearest, res.iv30 = [e], True, e.atm_iv
         return res
     e1, e2 = lower[-1], upper[0]
     w = e1.total_variance + (e2.total_variance - e1.total_variance) * (

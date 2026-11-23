@@ -310,14 +310,18 @@ class HistStore:
                 ).fetchone()
             )
 
-    def sessions_present(self, series: HistSeries, symbol: str) -> set[date]:
+    def sessions_present(
+        self, series: HistSeries, symbol: str, retry: frozenset[str] = frozenset()
+    ) -> set[date]:
+        """Sessions stored or recorded as missing, except missing ones whose reason is in
+        ``retry`` (a reason an amended method can now resolve)."""
         with self._conn() as c:
             rows = c.execute(
-                "SELECT session FROM obs WHERE series = ? AND symbol = ? "
-                "UNION SELECT session FROM missing WHERE series = ? AND symbol = ?",
+                "SELECT session, NULL FROM obs WHERE series = ? AND symbol = ? "
+                "UNION SELECT session, reason FROM missing WHERE series = ? AND symbol = ?",
                 (series.value, symbol, series.value, symbol),
             ).fetchall()
-        return {date.fromisoformat(r[0]) for r in rows}
+        return {date.fromisoformat(r[0]) for r in rows if r[1] is None or r[1] not in retry}
 
     def dividends(self, symbol: str) -> list[DividendEvent]:
         with self._conn() as c:

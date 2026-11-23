@@ -237,11 +237,12 @@ def test_massive_records_unusable_dividends_in_structured_form() -> None:
         {"ticker": "HYG", "ex_dividend_date": "2026-11-04", "cash_amount": "0.38",
          "declaration_date": "2026-10-20", "currency": "CAD"},
     ]  # fmt: skip
-    assert src._parse_dividends("HYG", rows) == ()
-    assert src.unusable_dividends == [
-        ("HYG", date(2026, 11, 3), "NO_DECLARATION_DATE"),
-        ("HYG", date(2026, 11, 4), "CURRENCY_CAD"),
-    ]
+    assert src._parse_dividends("HYG", rows) == ()  # ASSIGN-1: both skipped (DR-0027)
+    assert src.unusable_dividends == []
+    kept = src._parse_dividends("HYG", rows, keep_undeclared=True)  # HIST-1 (DR-0045)
+    assert [(d.ex_date, d.declaration_date) for d in kept] == [(date(2026, 11, 3), None)]
+    assert kept[0].public_time == et_at(date(2026, 11, 3), 9, 30)
+    assert src.unusable_dividends == [("HYG", date(2026, 11, 4), "CURRENCY_CAD")]
 
 
 # ------------------------------------------------------------------------------ H5
@@ -287,3 +288,22 @@ def test_a_store_error_cancels_queued_chain_requests(tmp_path: Path) -> None:
     with pytest.raises(sqlite3.OperationalError):
         build(store, fake, ["AAA"], start, end, workers=1, log=QUIET)
     assert fake.chain_calls <= 3
+
+
+def test_an_undeclared_dividend_supersedes_its_old_exclusion(tmp_path: Path) -> None:
+    """DR-0045 as amended: the ex-date return counts the cash, public from the ex-date
+    open; an earlier NO_DECLARATION_DATE row no longer excludes the session."""
+    store = HistStore(tmp_path / "h.sqlite")
+    fake = EventFake()
+    fake.unusable = [("AAA", D2, "NO_DECLARATION_DATE")]  # recorded by the first backfill
+    fake.closes[D2] = 99
+    build(store, fake, ["AAA"], D1, D5, with_iv=False, log=QUIET)
+    _, excl = HistoryView(store, et_at(D5, 18)).total_returns("AAA", D2, D2)
+    assert [e.reason for e in excl] == ["DIVIDEND_UNUSABLE:NO_DECLARATION_DATE"]
+    t = et_at(D2, 9, 30)
+    kept = DividendEvent(
+        symbol="AAA", ex_date=D2, amount=Decimal("1"), event_time=t, public_time=t, source="m"
+    )
+    store.add_events([kept])
+    rets, excl = HistoryView(store, et_at(D5, 18)).total_returns("AAA", D2, D2)
+    assert excl == [] and rets[0].log_return == pytest.approx(math.log((99 + 1) / 100))

@@ -32,7 +32,8 @@
   - `events`: dividends and splits, as the existing `DividendEvent` and `CorporateAction` records from Massive.
   - `missing`: deterministic derivation failures, with their reason.
   - `events` are keyed on the market fact: (kind, symbol, date, and for dividends their type). `ingest_time` is never part of the key (review fix HIST1-PIT-01).
-  - `unusable`: vendor dividends that couldn't be used (no declaration date, or not USD). Their ex-date return is excluded with `DIVIDEND_UNUSABLE:<reason>`, visible from that day's 09:30 open, rather than read as a price loss (review fix TR-2).
+  - `unusable`: vendor dividends that couldn't be used. Their ex-date return is excluded with `DIVIDEND_UNUSABLE:<reason>`, visible from that day's 09:30 open, rather than read as a price loss (review fix TR-2). Since the 2026-11-23 amendment this applies to non-USD dividends only.
+  - **Undeclared USD dividends** (amended 2026-11-23, Josh): a Massive dividend with no declaration date is kept on the HIST-1 path, public at **09:30 ET on its ex-date**. That can't look ahead, because a dividend is always declared before its ex-date. A `NO_DECLARATION_DATE` row recorded by the first backfill is superseded once the dividend is stored. ASSIGN-1 still requires a declaration date (DR-0027).
   - **Revisions:** a value that arrives again unchanged is a no-op. A *different* value for an existing key is never written over: it goes to an append-only `conflicts` table and is reported.
 - **Public times** (B10; backfills keep the real historical public time, and `ingest_time` records when we fetched it):
   - **Closes and ATM IV:** 17:15 ET on the session, ThetaData's end-of-day report time (DR-0026).
@@ -44,7 +45,7 @@
   3. **Forward:** the median of up to 8 put-call parity pairs nearest the close, with at least 3 required (MKT-1's `parity_pairs` and `min_parity_pairs`). It's rejected if more than MKT-1's `max_forward_gap` (10%) from the close.
   4. **ATM variance:** the out-of-the-money put strike just below the forward and the call strike just above, both two-sided and above MKT-1's minimum mid. Black-76 IVs are taken from mids, with time to expiry measured from the 16:00 ET close. Total variance is interpolated linearly in log-moneyness to k = 0.
   5. **30-day value:** total variance interpolated linearly in time between the nearest valid expirations on either side of 30 days (one exactly at 30 days is used alone). Then IV30 = √(w30 / (30/365)).
-  6. **No pair of expirations either side of 30 days:** recorded as missing, with its reason. There is no extrapolation and no fallback.
+  6. **No pair of expirations either side of 30 days** (amended 2026-11-23, Josh): the nearest valid expiration **21–45 days out** is used alone, and the record is flagged `method = nearest-expiry`. With none, the value is missing (`NO_BRACKET_OR_NEAREST_30D`). Bracketed values are unchanged. Sessions recorded as `NO_BRACKET_30D` under the first rule are derived again by the next build.
 - **Total returns as of a moment t:**
   - r_s = ln(m_s · (C_s + D_s) / C_{s−1}) for consecutive XNYS sessions.
     - m_s is the share multiplier of splits effective on s (split_to/split_from), counting only splits public by t.
@@ -66,7 +67,17 @@
 ## Review (2026-11-23)
 An internal adversarial review found 9 distinct defects, all fixed before the first backfill with regression tests: see `docs/review/HIST-1-findings.md`. The schema is now `HIST-1/2`.
 
-**Open question for Josh:** should a USD dividend with no declaration date be kept, with public time 09:30 ET on its ex-date? That can't look ahead, and the session would stay in the fits. It is excluded for now.
+## The first backfill and Josh's amendments (2026-11-23)
+- **The first backfill** (Mac, 178 min, at `64a7182`): 82,241 closes; 3,066 yields; 3,417 dividends and splits; 81,321 ATM IVs. 916 IVs were missing:
+  - 891 were `NO_BRACKET_30D`: XLRE 414, HYG 219, XLC 111, XLB 105, SMCI 19, others 1–6;
+  - 25 were `NO_VALID_EXPIRATION`.
+  - 4 fetch errors, all empty chains: ARM on 14–15 September 2023, its listing week; BABA on 13 June 2024 and 12 June 2025.
+  - 0 conflicts.
+- **1,548 dividends had no declaration date** (DIA 73, TLT 71, HYG 69, then quarterly payers at 34–45 each, across each name's full history).
+- **Josh's decisions:**
+  1. **Keep undeclared USD dividends,** public at the ex-date open.
+  2. **Use the nearest-expiry fallback** (21–45 days) for 30-day ATM IV.
+- **Both are in force before any R2 forecast uses HIST-1.** The next `remy hist build` stores the undeclared dividends and derives the earlier `NO_BRACKET_30D` sessions again.
 
 ## Consequences
 - **One store** backs `CLOSE-1` (its `CLOSE` series), so the official-close store is a view of HIST-1 rather than a second copy.

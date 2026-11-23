@@ -18,7 +18,7 @@ from typing import Any, Protocol
 
 from remy_finance.core import CorporateAction, DividendEvent
 from remy_finance.data.timeutil import et_at, next_session, previous_session, session_close, xnys
-from remy_finance.history.atm_iv import atm_iv30, rows_from_vendor
+from remy_finance.history.atm_iv import LEGACY_RETRY_REASONS, atm_iv30, rows_from_vendor
 from remy_finance.history.records import RATE_SYMBOL, HistObservation, HistSeries
 from remy_finance.history.store import HistStore
 from remy_finance.history.view import HistoryView
@@ -281,7 +281,8 @@ def build(
     if with_iv and not summary.stopped_at_deadline:
         tasks: list[tuple[str, date, float]] = []
         for s in symbols:
-            done = store.sessions_present(HistSeries.ATMIV30, s)
+            done = store.sessions_present(HistSeries.ATMIV30, s, LEGACY_RETRY_REASONS)
+            done |= {o.session for o in store.observations(HistSeries.ATMIV30, s)}
             closes = {o.session: float(o.value) for o in store.observations(HistSeries.CLOSE, s)}
             tasks += [(s, d, closes[d]) for d in sessions if d not in done and d in closes]
         log(f"ATM IV: {len(tasks)} (symbol, session) tasks with {workers} workers")

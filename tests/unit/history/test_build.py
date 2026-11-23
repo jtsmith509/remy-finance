@@ -30,7 +30,7 @@ class Fake:
         self.chain_calls += 1
         if (symbol, session) in self.fail:
             raise ConnectionError("terminal hiccup")
-        vols = {14: 0.3, 45: 0.3} if symbol == "AAA" else {40: 0.3, 50: 0.3}
+        vols = {14: 0.3, 45: 0.3} if symbol == "AAA" else {50: 0.3, 60: 0.3}
         return [
             {"expiration": r.expiration.isoformat(), "strike": r.strike,
              "right": "C" if r.call else "P", "bid": r.bid, "ask": r.ask}
@@ -67,7 +67,9 @@ def test_build_is_resumable_and_retries_fetch_errors(tmp_path: Path) -> None:
     # Yields are fetched from 14 days before the start, so every session has a public rate;
     # AAA's 4 November chain fails to fetch and is retried on the next run.
     assert s1.iv_added == 4 and len(s1.fetch_errors) == 1
-    assert {m[3] for m in store.missing(HistSeries.ATMIV30) if m[1] == "BBB"} == {"NO_BRACKET_30D"}
+    assert {m[3] for m in store.missing(HistSeries.ATMIV30) if m[1] == "BBB"} == {
+        "NO_BRACKET_OR_NEAREST_30D"
+    }
     iv = HistoryView(store, et_at(END, 18)).value(HistSeries.ATMIV30, "AAA", date(2026, 11, 5))
     assert iv is not None and abs(float(iv) - 0.3) < 1e-4
     assert HistoryView(store, et_at(END, 18)).latest(HistSeries.YIELD_10Y, RATE_SYMBOL)
@@ -76,3 +78,31 @@ def test_build_is_resumable_and_retries_fetch_errors(tmp_path: Path) -> None:
     s2 = build(store, fake, ["AAA", "BBB"], START, END, workers=2, log=lambda _: None)
     assert s2.closes_added == 0 and s2.iv_added == 1 and s2.fetch_errors == []
     assert fake.chain_calls - calls == 1  # only the failed session is fetched again
+
+
+def test_sessions_missing_under_the_old_rule_are_derived_again(tmp_path: Path) -> None:
+    """DR-0045 as amended: NO_BRACKET_30D rows (before the nearest-expiry fallback) are
+    retried; a value is then stored, flagged, and later runs skip it."""
+
+    class Monthly(Fake):
+        def option_eod_chain(self, symbol: str, session: date) -> list[dict[str, Any]]:
+            self.chain_calls += 1
+            return [
+                {"expiration": r.expiration.isoformat(), "strike": r.strike,
+                 "right": "C" if r.call else "P", "bid": r.bid, "ask": r.ask}
+                for r in chain(session, 100.0, {35: 0.3, 63: 0.3})
+            ]  # fmt: skip
+
+    store = HistStore(tmp_path / "h.sqlite")
+    for d in sessions_between(START, END):
+        store.add_missing(HistSeries.ATMIV30, "MON", d, "NO_BRACKET_30D")
+    store.add_missing(HistSeries.ATMIV30, "MON", END, "NO_VALID_EXPIRATION")  # no-op: exists
+    fake = Monthly()
+    s1 = build(store, fake, ["MON"], START, END, log=lambda _: None)
+    assert s1.iv_added == 5 and fake.chain_calls == 5
+    o = HistoryView(store, et_at(END, 18)).value(HistSeries.ATMIV30, "MON", END)
+    assert o is not None and abs(float(o) - 0.3) < 1e-4
+    stored = store.observations(HistSeries.ATMIV30, "MON")
+    assert all(("method", "nearest-expiry") in x.details for x in stored)
+    s2 = build(store, fake, ["MON"], START, END, log=lambda _: None)
+    assert s2.iv_added == 0 and fake.chain_calls == 5

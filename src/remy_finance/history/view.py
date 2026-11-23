@@ -100,7 +100,12 @@ class HistoryView:
         # A dividend the vendor reported but we could not use: the ex-date return is not
         # computed (its price drop would read as a loss). Visible from the ex-date open,
         # the earliest moment the drop can be seen.
+        # An undeclared dividend recorded as unusable before DR-0045's amendment is
+        # superseded once the dividend itself is stored (public at its ex-date open).
+        undeclared = {d.ex_date for d in div_events.values() if d.declaration_date is None}
         for kind, _, ex, reason in self.store.unusable(symbol):
+            if reason == "NO_DECLARATION_DATE" and ex in undeclared:
+                continue
             if kind == "DIVIDEND" and et_at(ex, 9, 30) <= self.as_of:
                 bad[ex] = f"DIVIDEND_UNUSABLE:{reason}"
         actions = {event_key(a): a for a in self.store.actions(symbol)}
