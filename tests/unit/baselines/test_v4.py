@@ -130,3 +130,15 @@ def test_rand1_v4_samples_the_v4_eligible_set_and_shares_the_score() -> None:
     assert {r.ranking_adjustment for r in recs} == {ADJ_0}  # random: no ranking key
     assert any(f.startswith("CANNOT_WIN_EXCLUDED:") for f in log.flags)
     assert all(("eligibility", "DR-0041") in r.search_config for r in recs)
+
+
+def test_v4_bug_signal_is_on_the_mean(monkeypatch: pytest.MonkeyPatch) -> None:
+    """TESTS-3: a mean just above +5% is a bug signal even if its ADJ-1 key is below."""
+    import remy_finance.baselines.mkt1 as mkt1
+
+    b = two_expiry_board()
+    cands, _ = generate(b)
+    monkeypatch.setattr(mkt1, "anchored_return", lambda *_: 0.0500001)
+    monkeypatch.setattr(mkt1, "anchored_mean_feasible", lambda *_: True)
+    v4 = score_board(b, cands, MKT_1_V4)
+    assert v4.bug_signals and not v4.scored

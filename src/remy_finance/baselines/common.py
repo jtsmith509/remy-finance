@@ -58,16 +58,23 @@ def underlying_of(c: Candidate) -> str:
 
 
 def underlyings_picked_today(
-    registry: Registry, engine: str, day: date, before: datetime | None = None
+    registry: Registry,
+    engine: str,
+    day: date,
+    before: datetime | None = None,
+    engine_version: str | None = None,
 ) -> frozenset[str]:
     """Underlyings this baseline already recommended on ``day`` (ET), for the per-day cap.
 
     With ``before``, only recommendations decided strictly earlier count. A re-run of a
-    snapshot's baseline then sees the same exclusions and reproduces the same picks."""
+    snapshot's baseline then sees the same exclusions and reproduces the same picks. With
+    ``engine_version``, only that version's picks count, so on a cut-over day v3's picks
+    never cap v4 (DR-0048)."""
     return frozenset(
         underlying_of(r.candidate)
         for r in registry.recommendations()
         if r.engine == engine
+        and (engine_version is None or r.engine_version == engine_version)
         and et_date(r.decision_time) == day
         and (before is None or r.decision_time < before)
     )

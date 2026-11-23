@@ -44,6 +44,12 @@ from remy_finance.snapshots.schedule import SnapshotKind, snapshot_time
 
 Baseline = Callable[..., tuple[list[Recommendation], BaselineRun]]
 BASELINES: tuple[tuple[str, Baseline], ...] = (("MKT-1", run_mkt1), ("RAND-1", run_rand1))
+
+
+class VersionMismatchError(RuntimeError):
+    """A stored run log belongs to another MKT-1/RAND-1 version than the slot's (DR-0048)."""
+
+
 STATUS_REPAIR_REASON = "no run log and no status recorded (the run was interrupted)"
 
 
@@ -128,9 +134,16 @@ class Pipeline:
     def _run_engine(
         self, name: str, runner: Baseline, board: MarketState, day: date, shared: _Shared
     ) -> BaselineRun:
+        cfg = shared.configs[name]
         done = self.runs.find(self.mode, board.session, name, board.snapshot_id, day.isoformat())
         if done is not None:  # already run: its status is recorded from the log
-            return self.runs.load(done)
+            log = self.runs.load(done)
+            if log.engine_version != cfg.engine_version:
+                raise VersionMismatchError(
+                    f"{name} already ran on this board as v{log.engine_version}; this slot "
+                    f"needs v{cfg.engine_version} (DR-0048): archive the replay first"
+                )
+            return log
         if shared.error is not None:
             raise shared.error
         if shared.candidates is None:
@@ -141,11 +154,13 @@ class Pipeline:
             except Exception as e:  # shared: every engine on this board fails with it
                 shared.error = e
                 raise
-        excluded = underlyings_picked_today(self.registry, name, day, before=board.as_of)
+        excluded = underlyings_picked_today(
+            self.registry, name, day, before=board.as_of, engine_version=cfg.engine_version
+        )
         recs, log = runner(
             board,
             shared.candidates,
-            cfg=shared.configs[name],
+            cfg=cfg,
             code_commit=self.code_commit,
             receipt_time=self.clock(),
             excluded_underlyings=excluded,

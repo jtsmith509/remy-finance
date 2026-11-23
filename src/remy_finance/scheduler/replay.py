@@ -27,6 +27,7 @@ from remy_finance.core import MarketState, Mode, Session, Side
 from remy_finance.data.protocol import OfficialCloseSource
 from remy_finance.data.timeutil import et_at, next_session
 from remy_finance.registry import Registry, registry_path
+from remy_finance.scheduler.cutover import BASELINE_CONFIGS
 from remy_finance.scheduler.held import board_symbols, held_provenance
 from remy_finance.scheduler.pipeline import Pipeline
 from remy_finance.scheduler.runlog import RunLogStore
@@ -138,6 +139,26 @@ class ReplayDriver:
                 raise RuntimeError(
                     f"{reg.path} is {reg.schema}: run `remy registry migrate --mode replay` "
                     "first, so the replay records run statuses (DR-0047)"
+                )
+            others = sorted(
+                (
+                    {
+                        r.engine_version
+                        for r in reg.recommendations()
+                        if r.engine in BASELINE_CONFIGS[self.baselines]
+                    }
+                    | {
+                        s.engine_version or "?"
+                        for s in reg.run_statuses()
+                        if s.engine in BASELINE_CONFIGS[self.baselines]
+                    }
+                )
+                - {self.baselines}
+            )
+            if others:  # one replay registry holds one MKT-1/RAND-1 version (DR-0048)
+                raise RuntimeError(
+                    f"the replay registry holds MKT-1/RAND-1 v{', v'.join(others)} records, "
+                    f"not v{self.baselines}: archive it first (`remy replay archive`)"
                 )
             p = Pipeline(
                 reg, RunLogStore(self.data_dir / "runs"), self.code_commit, lambda: _never()

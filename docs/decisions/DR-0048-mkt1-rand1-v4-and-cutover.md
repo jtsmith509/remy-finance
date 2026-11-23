@@ -43,14 +43,21 @@
   - The cut-over DR's own commit sets it, so the switch is in git, reviewed and pulled before it takes effect.
   - The run-status record (DR-0047) carries each slot's engine version, so the switch is visible per slot.
 - **Replays:** `remy replay run --baselines v3|v4`, default v3. A replay doesn't follow `CUTOVER`.
+  - A replay registry holds one MKT-1/RAND-1 version: a replay refuses to start over records of the other version ("archive it first").
+- **Versions never mix:**
+  - A stored run log is reused only if its engine version is the slot's. Otherwise the engine fails with `VersionMismatchError`.
+  - SELECT-1's per-day cap counts only the same version's picks, so on a CLOSE cut-over day v3's OPEN picks don't cap v4.
 - **Not in this DR:**
   - the cut-over slot itself (the cut-over DR, R2.10);
   - MKTV-1, FAC-1, HVOL-1 and RAND-L1, which join the same switch when they exist.
 
 ## Evidence that v3 is unchanged
 - **Artifact hashes:** `MKT_1` and `RAND_1` hash exactly as before this change: `af271cc7…` and `08923e90…`. A test pins both.
-- **Behaviour:** every existing baseline, scheduler and replay test passes unchanged. That's 666 tests before this change; the suite is now 675.
+- **Behaviour:** every existing baseline, scheduler and replay test passes unchanged. That's 666 tests before this change; the suite is now 681.
 - **The switch:** with `CUTOVER = None`, every slot resolves to v3.
+
+## Review (2026-11-23)
+An internal adversarial review found 3 defects and 3 missing tests, all fixed with regression tests: see `docs/review/v4-findings.md`.
 
 ## Consequences
 - **v4 is ready for the cut-over and for the R2 replay year** (`--baselines v4`). Its records are a separate cohort, scored descriptively by EVAL-1's metrics (EVAL-2 §1).
