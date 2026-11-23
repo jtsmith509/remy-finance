@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
+
+import pytest
 
 from remy_finance.core import MarketState, Mode, Provenance, Session
 from remy_finance.data.timeutil import et_at
@@ -21,6 +23,8 @@ from remy_finance.scheduler.tracked import (
     plan_provenance,
     tracked_only,
 )
+from remy_finance.snapshots.schedule import SnapshotKind
+from remy_finance.snapshots.store import SnapshotStore
 from tests.unit.baselines import synthetic as S
 from tests.unit.scheduler.test_tick import MON, World, run_day, tick
 
@@ -67,6 +71,7 @@ def test_tracked_only_names_are_never_recommended(tmp_path: Path) -> None:
 class TrackWorld(World):
     seen: list[tuple[frozenset[str], frozenset[str]]] = field(default_factory=list)
     hist_calls: list[tuple[date, frozenset[str]]] = field(default_factory=list)
+    deadlines: list[datetime] = field(default_factory=list)
     hist_result: BuildSummary = field(default_factory=lambda: BuildSummary(symbols=10))
 
     def capture(
@@ -78,8 +83,9 @@ class TrackWorld(World):
         self.seen.append((held, tracked))
         return super().capture(session, held, tracked)
 
-    def hist(self, day: date, tracked: frozenset[str]) -> BuildSummary:
+    def hist(self, day: date, tracked: frozenset[str], deadline: datetime) -> BuildSummary:
         self.hist_calls.append((day, tracked))
+        self.deadlines.append(deadline)
         return self.hist_result
 
 
@@ -104,8 +110,11 @@ def test_nightly_never_runs_near_session_hours(tmp_path: Path) -> None:
     for hh, mm in ((8, 0), (9, 59), (12, 0), (17, 29)):
         tick(world, tmp_path, et_at(TUE, hh, mm), hist_nightly=world.hist)
     assert world.hist_calls == []
-    tick(world, tmp_path, et_at(TUE, 7, 59), hist_nightly=world.hist)  # before 08:00
+    tick(world, tmp_path, et_at(TUE, 6, 50), hist_nightly=world.hist)  # < 1 h to 07:45
+    assert world.hist_calls == []
+    tick(world, tmp_path, et_at(TUE, 6, 40), hist_nightly=world.hist)
     assert [d for d, _ in world.hist_calls] == [MON]
+    assert world.deadlines == [et_at(TUE, 7, 45)]  # stops before TUE's quiet hours
 
 
 def test_nightly_retries_hourly_then_gives_up(tmp_path: Path) -> None:
@@ -137,7 +146,7 @@ def test_one_absent_close_is_not_retried_but_a_vendor_delay_is(tmp_path: Path) -
 def test_a_failing_nightly_does_not_block_the_backup(tmp_path: Path) -> None:
     world = TrackWorld(now=et_at(MON, 17, 31))
 
-    def boom(day: date, tracked: frozenset[str]) -> BuildSummary:
+    def boom(day: date, tracked: frozenset[str], deadline: datetime) -> BuildSummary:
         raise ConnectionError("terminal down")
 
     log = tick(world, tmp_path, et_at(MON, 17, 31), hist_nightly=boom)
@@ -165,3 +174,88 @@ def test_window_and_week_helpers() -> None:
     assert last_session_of_week(date(2026, 11, 27))  # the half-day Friday after Thanksgiving
     assert not last_session_of_week(date(2026, 11, 25))
     assert not last_session_of_week(MON)
+
+
+def test_evening_deadline_is_the_next_sessions_morning(tmp_path: Path) -> None:
+    world = TrackWorld(now=et_at(date(2026, 11, 20), 17, 31))  # a Friday
+    tick(world, tmp_path, et_at(date(2026, 11, 20), 17, 31), hist_nightly=world.hist)
+    assert world.deadlines == [et_at(date(2026, 11, 23), 7, 45)]  # Monday
+
+
+def test_a_deadline_stop_is_retried(tmp_path: Path) -> None:
+    world = TrackWorld(now=et_at(MON, 17, 31))
+    world.hist_result = BuildSummary(symbols=10, stopped_at_deadline=True)
+    tick(world, tmp_path, et_at(MON, 17, 31), hist_nightly=world.hist)
+    tick(world, tmp_path, et_at(MON, 18, 40), hist_nightly=world.hist)
+    assert len(world.hist_calls) == 2
+
+
+def test_nightly_tracks_forecast_targets_without_an_open_position(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    world = TrackWorld(now=et_at(MON, 9, 0))
+    run_day(world, tmp_path, MON)  # writes run logs with XYZ targets
+    monkeypatch.setattr(Pipeline, "held", lambda self, day: frozenset())
+    tick(world, tmp_path, et_at(MON, 18, 0), hist_nightly=world.hist)
+    assert world.hist_calls and "XYZ" in world.hist_calls[0][1]
+
+
+def test_nightly_tracks_open_positions_without_run_logs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    world = TrackWorld(now=et_at(MON, 17, 31))
+    monkeypatch.setattr(Pipeline, "held", lambda self, day: frozenset({"HELD"}))
+    tick(world, tmp_path, et_at(MON, 17, 31), hist_nightly=world.hist)
+    assert world.hist_calls[0][1] == {"HELD"}
+
+
+def test_a_bad_hist_store_fails_only_settlement(tmp_path: Path) -> None:
+    from remy_finance.history import HistStore, hist_path
+    from remy_finance.history.closes import StoreFirstCloses
+
+    bad = hist_path(tmp_path)
+    bad.parent.mkdir(parents=True)
+    bad.write_bytes(b"not a database" * 100)
+    world = TrackWorld(now=et_at(MON, 9, 0))
+    # Built without opening the store, as run_tick does.
+    world.closes = StoreFirstCloses(lambda: HistStore(bad), world.closes)  # type: ignore[assignment]
+    log = run_day(world, tmp_path, MON)
+    store = SnapshotStore(tmp_path / "snapshots")
+    assert store.find(Mode.PROSPECTIVE, MON, Session.OPEN, SnapshotKind.DECISION) is not None
+    assert any(a.startswith("backup") for a in log)
+    later = tick(world, tmp_path, et_at(S.EXPIRY, 18))  # a position expires: settle reads
+    assert any(a.startswith("FAILED settle") for a in later)
+    assert any(a.startswith("backup") for a in later)
+
+
+def test_live_capture_marks_tracked_only_names(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import remy_finance.data.massive as massive
+    import remy_finance.data.thetadata as thetadata
+    import remy_finance.snapshots.builder as builder
+    import remy_finance.universe.selection as selection
+    from remy_finance.scheduler.live import live_capture
+
+    class Membership:
+        members = ("AAA",)
+        version_label = "UNIV-1 test"
+
+    seen: dict[str, object] = {}
+
+    def fake_build(theta: object, source: object, session: Session, **kw: object) -> MarketState:
+        seen.update(kw)
+        board = _board()
+        return board.model_copy(update={"provenance": kw["provenance"]})
+
+    class Stub:
+        def __init__(self, *a: object, **k: object) -> None: ...
+        def prefetch(self, symbols: object) -> None: ...
+
+    monkeypatch.setattr(selection.UniverseStore, "membership_for", lambda self, d: Membership())
+    monkeypatch.setattr(thetadata, "ThetaDataSource", Stub)
+    monkeypatch.setattr(massive, "MassiveSource", Stub)
+    monkeypatch.setattr(builder, "build_prospective", fake_build)
+    board = live_capture(tmp_path)(Session.OPEN, frozenset({"OLD"}), frozenset({"TRK", "AAA"}))
+    assert seen["underlyings"] == ["AAA", "OLD", "TRK"]
+    assert tracked_only(board) == {"TRK"} and not_recommendable(board) == {"OLD", "TRK"}

@@ -107,6 +107,8 @@ class BuildSummary:
     # (symbol, session) in the range with no stored close after the fetch: a delayed or
     # absent vendor close (or a name not yet listed); retried by the next run.
     closes_absent: list[tuple[str, date]] = field(default_factory=list)
+    not_public: int = 0  # sessions in the range whose 17:15 ET public time hadn't passed
+    stopped_at_deadline: bool = False
     conflicts: int = 0
     seconds: float = 0.0
 
@@ -219,12 +221,25 @@ def build(
     with_iv: bool = True,
     log: Callable[[str], None] = print,
     clock: Callable[[], datetime] = lambda: datetime.now(UTC),
+    deadline: datetime | None = None,
 ) -> BuildSummary:
+    """Fetch and store the range. Only sessions whose end-of-day public time (17:15 ET)
+    has passed are stored, so nothing is ever written before it is public. With a
+    ``deadline``, the run stops cleanly when it passes (the rest is left for the next run,
+    which is resumable)."""
     t0 = time.perf_counter()
     summary = BuildSummary(symbols=len(symbols))
-    sessions = sessions_between(start, end)
-    session_set = set(sessions)
     now = clock()
+    every = sessions_between(start, end)
+    sessions = [d for d in every if et_at(d, *EOD_PUBLIC) <= now]
+    summary.not_public = len(every) - len(sessions)
+    session_set = set(sessions)
+
+    def late() -> bool:
+        if deadline is not None and clock() > deadline:
+            summary.stopped_at_deadline = True
+            return True
+        return False
 
     log(f"HIST-1: {len(symbols)} symbols, {len(sessions)} sessions {start}..{end}")
     try:
@@ -237,13 +252,17 @@ def build(
     except Exception as e:  # retried next run
         summary.fetch_errors.append(f"events: {type(e).__name__}: {e}")
     try:
+        rows = source.treasury_yields(start - timedelta(days=14), end)
         added, conflicts = store.add_observations(
-            yield_observations(source.treasury_yields(start - timedelta(days=14), end), now)
+            o for o in yield_observations(rows, now) if o.public_time <= now
         )
         summary.yields_added, summary.conflicts = added, summary.conflicts + conflicts
     except Exception as e:
         summary.fetch_errors.append(f"yields: {type(e).__name__}: {e}")
     for s in symbols:
+        if late():
+            summary.fetch_errors.append(f"deadline: stopped before the closes of {s}")
+            break
         try:
             obs = close_observations(s, source.stock_eod(s, start, end), session_set, now)
             added, conflicts = store.add_observations(obs)
@@ -259,7 +278,7 @@ def build(
         f"events +{summary.events_added}, unusable dividends +{summary.unusable_added}"
     )
 
-    if with_iv:
+    if with_iv and not summary.stopped_at_deadline:
         tasks: list[tuple[str, date, float]] = []
         for s in symbols:
             done = store.sessions_present(HistSeries.ATMIV30, s)
@@ -281,6 +300,10 @@ def build(
         try:
             futures = {pool.submit(one, t): t for t in tasks}
             for i, fut in enumerate(as_completed(futures), start=1):
+                if late():
+                    left = len(tasks) - i + 1
+                    summary.fetch_errors.append(f"deadline: {left} IV tasks left for the next run")
+                    break
                 sym, d, _ = futures[fut]
                 try:
                     _, _, res = fut.result()
@@ -312,6 +335,6 @@ def build(
         except BaseException:
             pool.shutdown(wait=False, cancel_futures=True)
             raise
-        pool.shutdown(wait=True)
+        pool.shutdown(wait=True, cancel_futures=summary.stopped_at_deadline)
     summary.seconds = time.perf_counter() - t0
     return summary

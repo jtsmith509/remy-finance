@@ -599,7 +599,9 @@ def _underlying_section(
             "",
             f"Closes come from CLOSE-1 (DR-0046) through the point-in-time rule: "
             f"{stats.from_store} read from the store, {stats.filled} store gaps filled from "
-            f"ThetaData and stored, {stats.not_found} not found.",
+            f"ThetaData and stored, {stats.not_found} not found, {stats.fetch_failed} not "
+            f"fetched because ThetaData failed"
+            + (f" ({stats.last_error})." if stats.last_error else "."),
         ]
     return lines
 

@@ -78,6 +78,8 @@ NIGHTLY_HHMM = (17, 30)
 HIST_QUIET_FROM = (8, 0)  # no nightly HIST-1 work from 08:00 ET until NIGHTLY_HHMM
 HIST_ATTEMPTS = 3
 HIST_RETRY = timedelta(minutes=60)
+HIST_DEADLINE = (7, 45)  # a running nightly update stops cleanly by 07:45 ET on a session day
+HIST_START_MARGIN = timedelta(minutes=60)
 
 
 def _no_tracked(day: date) -> frozenset[str]:
@@ -104,8 +106,9 @@ class Tick:
     notify: Callable[[str, str], None]
     export_repo: Path | None = None
     push: Callable[[Path, date, int], str] = push_export
-    # The nightly HIST-1 update: (session, tracked names) -> a BuildSummary (DR-0046).
-    hist_nightly: Callable[[date, frozenset[str]], Any] | None = None
+    # The nightly HIST-1 update: (session, tracked names, deadline) -> a BuildSummary
+    # (DR-0046).
+    hist_nightly: Callable[[date, frozenset[str], datetime], Any] | None = None
     board_tracked: Callable[[date], frozenset[str]] = _no_tracked
     actions: list[str] = field(default_factory=list)
 
@@ -172,6 +175,9 @@ class Tick:
                 settled, waiting = self.pipeline.settle_expired(self.closes, self.clock())
                 if settled or waiting:
                     self.log(f"settled {settled}; {waiting} waiting for an official close")
+                stats = getattr(self.closes, "stats", None)
+                if getattr(stats, "fetch_failed", 0):  # CLOSE-1 gaps the vendor couldn't fill
+                    self.log(f"settle: close vendor failed ({getattr(stats, 'last_error', '')})")
             self._nightly(today, registry)
 
     # ------------------------------------------------------------------ sessions
@@ -386,6 +392,13 @@ class Tick:
             today, *NIGHTLY_HHMM
         ):
             return  # never near session hours: the tick lock would delay the captures
+        # Stop before the next session's quiet hours, whenever the attempt started. The
+        # events fetch can't be interrupted (up to ~25 min with ticker events), so no
+        # attempt starts within HIST_START_MARGIN of the deadline.
+        morning = today if is_session(today) and now < et_at(today, *HIST_QUIET_FROM) else None
+        deadline = et_at(morning or next_session(today), *HIST_DEADLINE)
+        if now > deadline - HIST_START_MARGIN:
+            return
         path = self.data_dir / "scheduler" / "hist-attempts" / f"{day.isoformat()}.txt"
         tries = (
             [datetime.fromisoformat(x) for x in path.read_text(encoding="utf-8").split()]
@@ -404,11 +417,13 @@ class Tick:
         with self.guard("hist-nightly"):
             runs = RunLogStore(self.data_dir / "runs")
             tracked = self.pipeline.held(day) | forecast_targets(runs, Mode.PROSPECTIVE, day)
-            s = self.hist_nightly(day, tracked)
+            s = self.hist_nightly(day, tracked, deadline)
             # One name without a close (delisted, halted) is logged, not retried; most
             # names without one means the vendor's end-of-day isn't out yet: retry.
             absent_today = sum(1 for _, d in s.closes_absent if d == day)
-            problems = len(s.fetch_errors) + (absent_today * 2 > max(s.symbols, 1))
+            problems = (
+                len(s.fetch_errors) + (absent_today * 2 > max(s.symbols, 1)) + s.stopped_at_deadline
+            )
             summary = (
                 f"closes +{s.closes_added}, IV +{s.iv_added} (missing {s.iv_missing}), "
                 f"events +{s.events_added}, conflicts {s.conflicts}, "

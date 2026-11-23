@@ -148,7 +148,7 @@ class HistStore:
                 triggers = {
                     r[0] for r in c.execute("SELECT name FROM sqlite_master WHERE type='trigger'")
                 }
-        except sqlite3.OperationalError as e:
+        except sqlite3.DatabaseError as e:
             raise HistError(f"{path}: not a {SCHEMA_VERSION} store ({e})") from e
         if row is None or row[0] != SCHEMA_VERSION:
             raise HistError(f"{path}: not a {SCHEMA_VERSION} store")

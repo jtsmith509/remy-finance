@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 import time
 from collections.abc import Callable
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -67,12 +67,14 @@ def live_capture(
     return capture
 
 
-def live_hist_nightly(data_dir: Path) -> Callable[[date, frozenset[str]], BuildSummary]:
+def live_hist_nightly(
+    data_dir: Path,
+) -> Callable[[date, frozenset[str], datetime | None], BuildSummary]:
     """The nightly HIST-1 / CLOSE-1 update (DR-0046): the base names, the UNIV-1 members in
     force and the tracked names, over the last sessions. Ticker events (one Massive request
     per name) are fetched on the last session of each week only."""
 
-    def run(day: date, tracked: frozenset[str]) -> BuildSummary:
+    def run(day: date, tracked: frozenset[str], deadline: datetime | None = None) -> BuildSummary:
         from remy_finance.data.massive import MassiveSource
         from remy_finance.data.thetadata import ThetaDataSource
         from remy_finance.history import HistStore, hist_path
@@ -101,6 +103,7 @@ def live_hist_nightly(data_dir: Path) -> Callable[[date, frozenset[str]], BuildS
             end,
             workers=4,
             log=lambda _: None,
+            deadline=deadline,
         )
 
     return run

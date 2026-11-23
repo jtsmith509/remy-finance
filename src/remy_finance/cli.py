@@ -55,12 +55,14 @@ def _data_dir() -> Path:
 
 def _close1() -> StoreFirstCloses:
     """CLOSE-1 (DR-0046): official closes from HIST-1 first; a gap is fetched from
-    ThetaData and stored, write-once, once public."""
+    ThetaData and stored, write-once, once public. The store is opened on the first read,
+    so in the tick a bad store fails only the step that reads it."""
     from remy_finance.data.thetadata import ThetaDataSource
     from remy_finance.history import HistStore, hist_path
     from remy_finance.history.closes import StoreFirstCloses
 
-    return StoreFirstCloses(HistStore(hist_path(_data_dir())), ThetaDataSource())
+    data = _data_dir()
+    return StoreFirstCloses(lambda: HistStore(hist_path(data)), ThetaDataSource())
 
 
 def _symbols(text: str, session_date: date) -> tuple[list[str], str]:
@@ -955,6 +957,8 @@ def hist_build(
         f"(missing {s.iv_missing}), conflicts {s.conflicts}, fetch errors "
         f"{len(s.fetch_errors)} (re-run to retry)"
     )
+    if s.not_public:
+        typer.echo(f"  {s.not_public} sessions skipped: their close isn't public yet (17:15 ET)")
     if s.closes_absent:
         typer.echo(
             f"  {len(s.closes_absent)} (symbol, session) without a close (not yet listed, "
@@ -1017,12 +1021,12 @@ def hist_nightly(
     if path.exists():
         with Registry.open(path) as reg:
             tracked |= Pipeline(reg, runs, "", lambda: now).held(d)
-    s = live_hist_nightly(data)(d, tracked)
+    s = live_hist_nightly(data)(d, tracked, None)
     typer.echo(
         f"HIST-1 nightly {d}: {s.symbols} names ({len(tracked)} tracked), closes "
         f"+{s.closes_added}, IV +{s.iv_added} (missing {s.iv_missing}), events "
         f"+{s.events_added}, conflicts {s.conflicts}, closes absent {len(s.closes_absent)}, "
-        f"fetch errors {len(s.fetch_errors)}"
+        f"not yet public {s.not_public}, fetch errors {len(s.fetch_errors)}"
     )
     for e in s.fetch_errors[:20]:
         typer.echo(f"  {e}")

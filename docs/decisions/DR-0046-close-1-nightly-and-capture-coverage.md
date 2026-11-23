@@ -27,6 +27,7 @@
 
 ## Decision
 - **CLOSE-1 is HIST-1's `CLOSE` series.** `HistCloseSource` reads the store only. `StoreFirstCloses` reads the store first; a gap is fetched from ThetaData and written to the store once it's public, and each fill is counted.
+  - The store is opened on the first read, so in the tick a store that can't be opened fails only settlement, which is recorded and notified. A vendor failure during a gap fill never stops store reads: the gap waits and is counted.
   - The **scheduler's settlement**, the **replay driver** and `report cumulative`'s **F09 scores** all read through `StoreFirstCloses`. They still go through `official_close_as_of`, so nothing is used before 17:15 ET.
   - The report prints how many closes came from the store, how many gaps were filled from ThetaData, and how many weren't found (EVAL-2 §7.1).
   - A stored close always wins. A vendor value that differs is logged as a HIST-1 conflict (DR-0045), never written over.
@@ -34,7 +35,8 @@
   - **Names:** UNIV-CANDIDATES-1, SPY, the sector SPDRs, the UNIV-1 members in force, and every **tracked** name: underlyings with an open position, plus those with an unexpired S_T/F target in the run logs. FAC-1's targets, IV targets and shadow positions join this set when those engines exist.
   - **Series:** closes, Treasury yields, dividends and splits, and the 30-day ATM IV, by HIST-1's `build`. Ticker events cost one Massive request per name, so they're fetched only on the last session of each week.
   - **Window:** the last 10 sessions. The build is resumable, so a missed night is caught up and only what's missing is fetched.
-  - **When:** after 17:30 ET, and **never between 08:00 and 17:30 ET on a session day**, so the tick lock can't delay a capture.
+  - **When:** after 17:30 ET, and **never between 08:00 and 17:30 ET on a session day**, so the tick lock can't delay a capture. Each attempt gets a deadline of 07:45 ET on the next session day. The build stops cleanly when it passes, and no attempt starts within an hour of it.
+  - **Public time:** `build` stores only sessions whose 17:15 ET public time has passed, and only yields already public, whoever runs it and whatever day is asked for.
   - **Retries:** hourly, at most 3 times a night, then the night is marked "gave up" with a notification, and the next night's window retries.
     - A retry is triggered by any fetch error, or by more than half the names lacking that day's close (the vendor's end-of-day isn't out yet).
     - A single name with no close (delisted or halted) is logged, not retried.
@@ -43,6 +45,9 @@
 - **Tracked-only names on boards (§6.3a):** a board's capture takes the held names (DR-0039) and the tracked names. Names on the board only because they are tracked are listed in its provenance as `tracked_only`, and recommendations never use them, exactly as with `held_only`. Until the shadow panel exists, the set of board-tracked names is empty; the mechanism is in place and tested.
 - **The one-off backfill (P12):** `remy hist build` covers the base names from November 2022. `remy hist coverage` lists every close the records need: each position's expiration, and each MKT-1 fit's target, from both registries and run logs. It counts how many are stored and lists the missing ones. `--fill` fetches the missing ones into CLOSE-1.
 - **Amends DR-0040:** closes come from CLOSE-1, not from a report-time fetch alone.
+
+## Review (2026-11-23)
+An internal adversarial review found 4 defects and 4 missing tests, all fixed with regression tests: see `docs/review/CLOSE-1-findings.md`.
 
 ## Consequences
 - **Scores and settlement are reproducible:** every close used is in the append-only store, with its public time.

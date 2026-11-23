@@ -64,31 +64,62 @@ class CloseStats:
     from_store: int = 0
     filled: int = 0  # gaps fetched from the vendor and written to the store
     not_found: int = 0  # neither stored nor available from the vendor
+    fetch_failed: int = 0  # gaps not fetched because the vendor failed
+    last_error: str = ""
 
 
 class StoreFirstCloses:
-    """The store first; a gap is fetched from ``fallback`` and stored once public."""
+    """The store first; a gap is fetched from ``fallback`` and stored once public.
+
+    ``store`` may be a factory: the store is then opened on the first read, so a store that
+    can't be opened fails the step that reads it (inside the tick's guard), not the caller
+    that built this source. A vendor failure never stops store reads: the gap is counted
+    in ``stats.fetch_failed`` and returned as ``None`` (not public), and the vendor isn't
+    asked again by this source."""
 
     def __init__(
         self,
-        store: HistStore,
+        store: HistStore | Callable[[], HistStore],
         fallback: OfficialCloseSource | None,
         clock: Callable[[], datetime] = lambda: datetime.now(UTC),
     ) -> None:
-        self.hist = store
-        self.stored = HistCloseSource(store)
+        self._store = store
+        self._hist: HistStore | None = store if isinstance(store, HistStore) else None
         self.fallback = fallback
         self.clock = clock
         self.stats = CloseStats()
+        self._vendor_broken = False
+
+    @property
+    def hist(self) -> HistStore:
+        if self._hist is None:
+            factory = self._store
+            assert not isinstance(factory, HistStore)
+            self._hist = factory()
+        return self._hist
+
+    @property
+    def stored(self) -> HistCloseSource:
+        return HistCloseSource(self.hist)
 
     def official_close(self, symbol: str, session_date: date) -> OfficialClose | None:
         stored = self.stored.official_close(symbol, session_date)
         if stored is not None:
             self.stats.from_store += 1
             return stored
-        fetched = (
-            None if self.fallback is None else self.fallback.official_close(symbol, session_date)
-        )
+        if self.fallback is None:
+            self.stats.not_found += 1
+            return None
+        if self._vendor_broken:
+            self.stats.fetch_failed += 1
+            return None
+        try:
+            fetched = self.fallback.official_close(symbol, session_date)
+        except Exception as e:  # the store keeps being read; the gap waits
+            self._vendor_broken = True
+            self.stats.fetch_failed += 1
+            self.stats.last_error = f"{type(e).__name__}: {e}"[:300]
+            return None
         if fetched is None:
             self.stats.not_found += 1
             return None
