@@ -46,5 +46,6 @@
 | [DR-0042](DR-0042-rank-on-excess-return.md) | Rank on return in excess of the risk-free rate | from R2 | accepted |
 | [DR-0043](DR-0043-run-log-code-commit.md) | Run logs record their code commit (BaselineRun schema 2) | R1 maintenance | accepted |
 | [DR-0044](DR-0044-r2-data-substitutions.md) | R2 data substitutions (SPY 30-day IV for VIX; Massive rates history) and the 3-year minimum-history rule | R2 | accepted |
+| [DR-0045](DR-0045-hist-1-history-store.md) | HIST-1: the point-in-time history store (closes, ATM IV, yields, total returns) | R2 | proposed |
 
 Each record has these sections: context, options considered, decision, consequences. Status stays *proposed* until Josh confirms it. A confirmed DR is superseded only by a new, linked DR; it is never edited in place.

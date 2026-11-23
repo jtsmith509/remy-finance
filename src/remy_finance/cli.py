@@ -32,6 +32,8 @@ report_app = typer.Typer(
 app.add_typer(report_app, name="report")
 replay_app = typer.Typer(help="Replay the R1 pipeline over history (R1.8).", no_args_is_help=True)
 app.add_typer(replay_app, name="replay")
+hist_app = typer.Typer(help="HIST-1 history store (R2, DR-0045).", no_args_is_help=True)
+app.add_typer(hist_app, name="hist")
 
 REPO_DIR = Path(__file__).resolve().parents[2]
 
@@ -895,3 +897,75 @@ def report_power_inputs(mode: ModeOpt = "replay", out: OutOpt = None) -> None:
 
 if __name__ == "__main__":
     app()
+
+
+# ---------------------------------------------------------------------- HIST-1 (R2)
+
+HIST_SECTORS = ("XLB", "XLC", "XLE", "XLF", "XLI", "XLK", "XLP", "XLRE", "XLU", "XLV", "XLY")
+
+
+@hist_app.command("build")
+def hist_build(
+    start: Annotated[str, typer.Option(help="First session, YYYY-MM-DD")] = "2022-11-01",
+    end: Annotated[str, typer.Option(help="Last session, YYYY-MM-DD; default yesterday (ET)")] = "",
+    symbols: Annotated[
+        str, typer.Option(help="Comma-separated; default UNIV-CANDIDATES-1, SPY, sector SPDRs")
+    ] = "",
+    workers: Annotated[int, typer.Option(help="Parallel ThetaData chain requests")] = 4,
+    no_iv: Annotated[bool, typer.Option("--no-iv", help="Skip the ATM IV derivation")] = False,
+) -> None:
+    """Backfill HIST-1: closes, Treasury yields, dividends and splits, then 30-day ATM IV.
+    Resumable: re-running skips what is stored. Needs the Theta Terminal and Massive."""
+    from datetime import UTC, timedelta
+
+    from remy_finance.data.massive import MassiveSource
+    from remy_finance.data.thetadata import ThetaDataSource
+    from remy_finance.data.timeutil import et_date
+    from remy_finance.history import HistStore, hist_path
+    from remy_finance.history.build import ThetaMassiveHistSource, build
+    from remy_finance.universe.candidates import UNIV_CANDIDATES_1
+
+    names = (
+        [s.strip().upper() for s in symbols.split(",") if s.strip()]
+        if symbols
+        else sorted({*UNIV_CANDIDATES_1, "SPY", *HIST_SECTORS})
+    )
+    last = date.fromisoformat(end) if end else et_date(datetime.now(UTC)) - timedelta(days=1)
+    store = HistStore(hist_path(_data_dir()))
+    massive = MassiveSource(
+        min_interval=float(os.environ.get("MASSIVE_MIN_INTERVAL", "12.5")),
+        include_ticker_events=True,
+    )
+    source = ThetaMassiveHistSource(ThetaDataSource(), massive)
+    s = build(
+        store, source, names, date.fromisoformat(start), last, workers=workers,
+        with_iv=not no_iv, log=typer.echo,
+    )  # fmt: skip
+    typer.echo(
+        f"HIST-1 done in {s.seconds / 60:.0f} min: closes +{s.closes_added}, yields "
+        f"+{s.yields_added}, events +{s.events_added}, ATM IV +{s.iv_added} "
+        f"(missing {s.iv_missing}), conflicts {s.conflicts}, fetch errors "
+        f"{len(s.fetch_errors)} (re-run to retry)"
+    )
+    for e in s.fetch_errors[:20]:
+        typer.echo(f"  {e}")
+
+
+@hist_app.command("status")
+def hist_status() -> None:
+    """Counts per series and symbol, missing values by reason, and conflicts."""
+    from collections import Counter
+
+    from remy_finance.history import HistStore, hist_path
+
+    path = hist_path(_data_dir())
+    if not path.exists():
+        typer.echo(f"no HIST-1 store at {path} (run `remy hist build`)")
+        raise typer.Exit(1)
+    store = HistStore(path)
+    typer.echo(f"HIST-1 at {path}: {store.counts()}")
+    reasons = Counter((m[0], m[3]) for m in store.missing())
+    for (series, reason), n in sorted(reasons.items()):
+        typer.echo(f"  missing {series} {reason}: {n}")
+    for c in store.conflicts()[:20]:
+        typer.echo(f"  conflict {c.series} {c.symbol} {c.session}: kept {c.kept_hash[:12]}")

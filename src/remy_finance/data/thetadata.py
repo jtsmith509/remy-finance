@@ -237,6 +237,24 @@ class ThetaDataSource:
                 )
         return tuple(out)
 
+    # ------------------------------------------------- raw history (HIST-1, DR-0045)
+
+    def stock_eod(self, symbol: str, start: date, end: date) -> list[dict[str, Any]]:
+        """Raw ``stock/history/eod`` rows for [start, end] (HIST-1 backfill)."""
+        return self._get(
+            "/v3/stock/history/eod", symbol=symbol, start_date=_ymd(start), end_date=_ymd(end)
+        )
+
+    def option_eod_chain(self, underlying: str, session_date: date) -> list[dict[str, Any]]:
+        """Raw ``option/history/eod`` rows for one session, every expiration (HIST-1)."""
+        return self._get(
+            "/v3/option/history/eod",
+            symbol=underlying,
+            expiration="*",
+            start_date=_ymd(session_date),
+            end_date=_ymd(session_date),
+        )
+
     def option_volume(self, underlying: str, session_date: date) -> OptionVolume | None:
         """Sum of contract volume across the chain from the session's EOD report (17:15 ET)."""
         rows = self._get(

@@ -239,6 +239,28 @@ class MassiveSource:
             )
         return tuple(sorted(out, key=lambda d: (d.ex_date, d.canonical_json())))
 
+    # ------------------------------------------------- raw history (HIST-1, DR-0045)
+
+    def all_dividends(self, symbol: str) -> tuple[DividendEvent, ...]:
+        """Every parsed dividend, each with its own ``public_time`` (filter as of later)."""
+        return self._load_dividends(symbol)
+
+    def all_actions(self, symbol: str) -> tuple[CorporateAction, ...]:
+        """Every parsed split or ticker change, each with its own ``public_time``."""
+        return self._load_actions(symbol)
+
+    def treasury_yields(self, start: date, end: date) -> list[dict[str, Any]]:
+        """Raw ``fed/v1/treasury-yields`` rows for [start, end] (HIST-1 backfill)."""
+        return self._paged(
+            "/fed/v1/treasury-yields",
+            {
+                "date.gte": start.isoformat(),
+                "date.lte": end.isoformat(),
+                "sort": "date.asc",
+                "limit": "5000",
+            },
+        )
+
     def dividends(self, symbol: str, known_as_of: datetime) -> Sequence[DividendEvent]:
         return tuple(d for d in self._load_dividends(symbol) if d.public_time <= known_as_of)
 
