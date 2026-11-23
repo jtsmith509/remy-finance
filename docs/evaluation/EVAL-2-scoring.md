@@ -1,6 +1,6 @@
 # EVAL-2: pre-registered scoring protocol for R2
 
-- **Status:** **revised draft for Josh's approval** (revision 3, 2026-11-23).
+- **Status:** **FROZEN.** Approved by Josh on 2026-11-23, at commit `dd5e6e7` (revision 3). Changes go only through EVAL-3.
   - It folds in Codex's review (E01–E12) and a pre-freeze adversarial check (36 verified issues), both recorded in `docs/review/EVAL-2-findings.md`, plus Josh's decisions.
   - It is frozen in git at approval, *before any empirical R2 model output exists* (R2 brief §0.3, B01).
 - **Extends:** EVAL-1 (`docs/evaluation/EVAL-1-scoring.md`, frozen). Everything in EVAL-1 still applies to MKT-1 and RAND-1, including P1 and P2 on their own clock (EVAL-1 §5), except as amended here.
