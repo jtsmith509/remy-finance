@@ -1,6 +1,6 @@
 # DR-0046: CLOSE-1, the nightly HIST-1 update and capture coverage
 
-- **Status:** proposed (2026-11-23). Awaits Josh's confirmation.
+- **Status:** accepted (Josh, 2026-11-23). CLOSE-1 lives inside HIST-1; gaps are fetched and stored; the nightly update runs in the tick; ticker events are fetched weekly; settlement switches to CLOSE-1 now.
 - **Date:** 2026-11-23
 - **Source:** R2 brief P12 (CLOSE-1) and P13 (HIST-1); EVAL-2 §6.3 (capture coverage, "recorded in a new DR") and §7.1 (closes read only from CLOSE-1); DR-0040 (F09 scores), as amended by P12; DR-0045 (HIST-1); DR-0039 (held names on boards).
 - **Stage:** R2, Part 1
@@ -48,6 +48,13 @@
 
 ## Review (2026-11-23)
 An internal adversarial review found 4 defects and 4 missing tests, all fixed with regression tests: see `docs/review/CLOSE-1-findings.md`.
+
+## Josh's answers (2026-11-23)
+1. **Where CLOSE-1 lives:** inside HIST-1, as its `CLOSE` series. This amends P12's `data/closes/` path.
+2. **Gap fills:** fetch from ThetaData and store, write-once, only once public.
+3. **The nightly update:** inside the tick.
+4. **Ticker events:** weekly, on the last session of each week.
+5. **Settlement:** switches to CLOSE-1 now, from the next pull. The pull happens after the HIST-1 backfill finishes, outside session hours.
 
 ## Consequences
 - **Scores and settlement are reproducible:** every close used is in the append-only store, with its public time.
