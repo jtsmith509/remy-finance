@@ -1,6 +1,6 @@
 # DR-0048: MKT-1 v4, RAND-1 v4 and the cut-over mechanism
 
-- **Status:** proposed (2026-11-23). Josh answered the three design questions (below). The rest awaits his confirmation.
+- **Status:** accepted (Josh, 2026-11-23). No 3-year history rule for v4; the cut-over is a date constant in code, set by the cut-over DR's own commit; replays name their version (`--baselines`, default v3).
 - **Date:** 2026-11-23
 - **Source:** R2 brief P2 and R2.2; [DR-0041](DR-0041-exclude-candidates-that-cannot-win.md) (eligibility) and [DR-0042](DR-0042-rank-on-excess-return.md) (ADJ-1), both accepted 2026-11-18 "from R2"; EVAL-2 §1 (the v4 population) and §4.1 (the cut-over slot); [DR-0044](DR-0044-r2-data-substitutions.md).
 - **Stage:** R2, Part 1 (R2.2)

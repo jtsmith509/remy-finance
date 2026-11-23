@@ -49,6 +49,6 @@
 | [DR-0045](DR-0045-hist-1-history-store.md) | HIST-1: the point-in-time history store (closes, ATM IV, yields, total returns) | R2 | proposed |
 | [DR-0046](DR-0046-close-1-nightly-and-capture-coverage.md) | CLOSE-1 as HIST-1's close series, the nightly HIST-1 update, and capture coverage (EVAL-2 §6.3) | R2 | accepted |
 | [DR-0047](DR-0047-run-status-record.md) | The run-status record (EVAL-2 §4.3): a hash-chained `run_status` registry table (REGISTRY-2) and independent engine runs | R2 | accepted |
-| [DR-0048](DR-0048-mkt1-rand1-v4-and-cutover.md) | MKT-1 v4 and RAND-1 v4 (DR-0041 eligibility, DR-0042 ADJ-1) and the cut-over switch | R2 | proposed |
+| [DR-0048](DR-0048-mkt1-rand1-v4-and-cutover.md) | MKT-1 v4 and RAND-1 v4 (DR-0041 eligibility, DR-0042 ADJ-1) and the cut-over switch | R2 | accepted |
 
 Each record has these sections: context, options considered, decision, consequences. Status stays *proposed* until Josh confirms it. A confirmed DR is superseded only by a new, linked DR; it is never edited in place.
