@@ -137,6 +137,10 @@ class MassiveSource:
         self._div_cache: dict[str, tuple[DividendEvent, ...]] = {}
         self._action_cache: dict[str, tuple[CorporateAction, ...]] = {}
         self.skipped: list[str] = []
+        # Structured forms of ``skipped`` for HIST-1 (DR-0045): (symbol, ex_date, reason)
+        # for dividends that could not be used, and symbols whose ticker events failed.
+        self.unusable_dividends: list[tuple[str, date, str]] = []
+        self.event_failures: list[str] = []
         self.schedule_declared: list[str] = []
         self.requests_made = 0
 
@@ -211,9 +215,11 @@ class MassiveSource:
             decl = r.get("declaration_date")
             if not decl:
                 self.skipped.append(f"{symbol} ex {ex}: no declaration_date")
+                self._unusable(symbol, ex, "NO_DECLARATION_DATE")
                 continue
             if str(r.get("currency", "USD")) != "USD":
                 self.skipped.append(f"{symbol} ex {ex}: currency {r.get('currency')}")
+                self._unusable(symbol, ex, f"CURRENCY_{r.get('currency')}")
                 continue
             if len(ex_by_decl.get(str(decl), ())) > 1:
                 public = et_at(date.fromisoformat(str(ex)), 9, 30)
@@ -238,6 +244,12 @@ class MassiveSource:
                 )
             )
         return tuple(sorted(out, key=lambda d: (d.ex_date, d.canonical_json())))
+
+    def _unusable(self, symbol: str, ex: object, reason: str) -> None:
+        try:
+            self.unusable_dividends.append((symbol, date.fromisoformat(str(ex)[:10]), reason))
+        except ValueError:
+            self.event_failures.append(f"{symbol}: dividend with unreadable ex-date {ex!r}")
 
     # ------------------------------------------------- raw history (HIST-1, DR-0045)
 
@@ -345,6 +357,7 @@ class MassiveSource:
             return self._ticker_changes(symbol, now)
         except MassiveError as e:
             self.skipped.append(f"{symbol}: ticker events unavailable ({e})")
+            self.event_failures.append(f"{symbol}: ticker events unavailable ({e})")
             return []
 
     def prefetch(self, symbols: Sequence[str], chunk: int = 25) -> None:

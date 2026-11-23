@@ -51,6 +51,12 @@ class Fake:
     def events(self, symbols: list[str]) -> list[DividendEvent | CorporateAction]:
         return []
 
+    def unusable_dividends(self) -> list[tuple[str, date, str]]:
+        return []
+
+    def event_failures(self) -> list[str]:
+        return []
+
 
 def test_build_is_resumable_and_retries_fetch_errors(tmp_path: Path) -> None:
     store = HistStore(tmp_path / "h.sqlite")

@@ -14,9 +14,9 @@ from datetime import date, datetime
 from decimal import Decimal
 
 from remy_finance.core import CorporateActionType, LookaheadError
-from remy_finance.data.timeutil import et_date, previous_session
+from remy_finance.data.timeutil import et_at, et_date, previous_session
 from remy_finance.history.records import RATE_SYMBOL, YIELD_TENOR_YEARS, HistObservation, HistSeries
-from remy_finance.history.store import HistStore
+from remy_finance.history.store import HistStore, event_key
 
 SPLIT_KINDS = (CorporateActionType.SPLIT, CorporateActionType.REVERSE_SPLIT)
 UNSUPPORTED_KINDS = (
@@ -65,8 +65,7 @@ class HistoryView:
         return got[0].value if got else None
 
     def latest(self, series: HistSeries, symbol: str) -> HistObservation | None:
-        got = self.series(series, symbol, None, self.as_of_date)
-        return got[-1] if got else None
+        return self.store.latest_observation(series, symbol, self.as_of_date, self.as_of)
 
     def rates(self) -> dict[float, float]:
         """Latest public Treasury yields by maturity in years (for discount factors)."""
@@ -86,16 +85,26 @@ class HistoryView:
         r_s = ln(m_s · (C_s + D_s) / C_prev), where C_prev is the previous XNYS session's
         close, m_s the share multiplier of splits effective on s and D_s the cash dividends
         with ex-date s, counting only actions public by ``as_of``. No return is computed
-        across a missing close; sessions with an unsupported action are excluded."""
+        across a missing close; sessions with an unsupported action or an unusable
+        dividend are excluded."""
         self._check(end)
         closes = {o.session: float(o.value) for o in self.series(HistSeries.CLOSE, symbol)}
         divs: dict[date, float] = {}
-        for d in self.store.dividends(symbol):
+        # Keyed on the market fact, so a duplicate can never be counted twice.
+        div_events = {event_key(d): d for d in self.store.dividends(symbol)}
+        for d in div_events.values():
             if d.public_time <= self.as_of:
                 divs[d.ex_date] = divs.get(d.ex_date, 0.0) + float(d.amount)
         mult: dict[date, float] = {}
         bad: dict[date, str] = {}
-        for a in self.store.actions(symbol):
+        # A dividend the vendor reported but we could not use: the ex-date return is not
+        # computed (its price drop would read as a loss). Visible from the ex-date open,
+        # the earliest moment the drop can be seen.
+        for kind, _, ex, reason in self.store.unusable(symbol):
+            if kind == "DIVIDEND" and et_at(ex, 9, 30) <= self.as_of:
+                bad[ex] = f"DIVIDEND_UNUSABLE:{reason}"
+        actions = {event_key(a): a for a in self.store.actions(symbol)}
+        for a in actions.values():
             if a.public_time > self.as_of:
                 continue
             det = dict(a.details)

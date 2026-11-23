@@ -58,6 +58,7 @@ def test_vendor_rows_are_parsed_and_malformed_rows_skipped() -> None:
             {"expiration": "2026-12-18", "strike": "100", "right": "CALL", "bid": 1, "ask": 1.1},
             {"expiration": "2026-12-18", "strike": "100", "right": "P", "bid": 2, "ask": 2.2},
             {"strike": "100"},
-        ]
+        ],
+        "XYZ",
     )
     assert [(r.call, r.mid) for r in rows] == [(True, 1.05), (False, 2.1)]

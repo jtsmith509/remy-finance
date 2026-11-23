@@ -32,11 +32,26 @@ EOD_PUBLIC = (17, 15)  # ThetaData end-of-day report time (DR-0026)
 IV_DECIMALS = Decimal("0.000001")
 
 
+MAX_RATE_AGE_DAYS = 10  # older public yields count as missing: retry, don't derive
+
+
+class MissingInputError(RuntimeError):
+    """An input to a derivation is absent (no public rates, an empty chain). Counted as a
+    fetch error and retried next run; never recorded as missing (DR-0045)."""
+
+
 class HistSource(Protocol):
     def stock_eod(self, symbol: str, start: date, end: date) -> list[dict[str, Any]]: ...
     def option_eod_chain(self, symbol: str, session: date) -> list[dict[str, Any]]: ...
     def treasury_yields(self, start: date, end: date) -> list[dict[str, Any]]: ...
     def events(self, symbols: Sequence[str]) -> list[DividendEvent | CorporateAction]: ...
+    def unusable_dividends(self) -> list[tuple[str, date, str]]:
+        """(symbol, ex_date, reason) for dividends ``events`` could not return."""
+        ...
+
+    def event_failures(self) -> list[str]:
+        """Event fetches that failed inside ``events`` (retried next run)."""
+        ...
 
 
 class ThetaMassiveHistSource:
@@ -70,12 +85,19 @@ class ThetaMassiveHistSource:
             out += list(self.massive.all_actions(s))
         return out
 
+    def unusable_dividends(self) -> list[tuple[str, date, str]]:
+        return list(self.massive.unusable_dividends)
+
+    def event_failures(self) -> list[str]:
+        return list(self.massive.event_failures)
+
 
 @dataclass
 class BuildSummary:
     closes_added: int = 0
     yields_added: int = 0
     events_added: int = 0
+    unusable_added: int = 0
     iv_added: int = 0
     iv_missing: int = 0
     fetch_errors: list[str] = field(default_factory=list)
@@ -149,6 +171,18 @@ def yield_observations(rows: Iterable[dict[str, Any]], now: datetime) -> list[Hi
     return out
 
 
+def public_rates(store: HistStore, session: date) -> dict[float, float]:
+    """The yields public at ``session``'s end-of-day time, for discount factors. Raises
+    ``MissingInputError`` if the 1-month or 3-month yield is absent or more than
+    ``MAX_RATE_AGE_DAYS`` old, so the derivation is retried rather than recorded missing."""
+    view = HistoryView(store, et_at(session, *EOD_PUBLIC))
+    for series in (HistSeries.YIELD_1M, HistSeries.YIELD_3M):
+        o = view.latest(series, RATE_SYMBOL)
+        if o is None or (session - o.session).days > MAX_RATE_AGE_DAYS:
+            raise MissingInputError(f"no public {series.value} as of {session}")
+    return view.rates()
+
+
 def build(
     store: HistStore,
     source: HistSource,
@@ -169,7 +203,12 @@ def build(
 
     log(f"HIST-1: {len(symbols)} symbols, {len(sessions)} sessions {start}..{end}")
     try:
-        summary.events_added = store.add_events(source.events(symbols))
+        added, conflicts = store.add_events(source.events(symbols))
+        summary.events_added, summary.conflicts = added, summary.conflicts + conflicts
+        summary.unusable_added = store.add_unusable(
+            ("DIVIDEND", sym, ex, reason) for sym, ex, reason in source.unusable_dividends()
+        )
+        summary.fetch_errors += [f"events: {f}" for f in source.event_failures()]
     except Exception as e:  # retried next run
         summary.fetch_errors.append(f"events: {type(e).__name__}: {e}")
     try:
@@ -187,8 +226,10 @@ def build(
             summary.conflicts += conflicts
         except Exception as e:
             summary.fetch_errors.append(f"closes {s}: {type(e).__name__}: {e}")
-    log(f"closes +{summary.closes_added}, yields +{summary.yields_added}, "
-        f"events +{summary.events_added}")  # fmt: skip
+    log(
+        f"closes +{summary.closes_added}, yields +{summary.yields_added}, "
+        f"events +{summary.events_added}, unusable dividends +{summary.unusable_added}"
+    )
 
     if with_iv:
         tasks: list[tuple[str, date, float]] = []
@@ -200,11 +241,16 @@ def build(
 
         def one(task: tuple[str, date, float]) -> tuple[str, date, Any]:
             sym, d, spot = task
-            rows = rows_from_vendor(source.option_eod_chain(sym, d))
-            rates = HistoryView(store, et_at(d, *EOD_PUBLIC)).rates()
-            return sym, d, atm_iv30(rows, spot, d, rates)
+            rates = public_rates(store, d)  # before the fetch: no rates, no request
+            raw = source.option_eod_chain(sym, d)
+            if not raw:
+                raise MissingInputError("EMPTY_CHAIN")
+            return sym, d, atm_iv30(rows_from_vendor(raw, sym), spot, d, rates)
 
-        with ThreadPoolExecutor(max_workers=max(1, workers)) as pool:
+        # Managed by hand so any exit from the loop (Ctrl-C, a store error) cancels the
+        # queued chain requests instead of running them all with nobody storing results.
+        pool = ThreadPoolExecutor(max_workers=max(1, workers))
+        try:
             futures = {pool.submit(one, t): t for t in tasks}
             for i, fut in enumerate(as_completed(futures), start=1):
                 sym, d, _ = futures[fut]
@@ -235,5 +281,9 @@ def build(
                     errors = len(summary.fetch_errors)
                     log(f"ATM IV {i}/{len(tasks)}: +{summary.iv_added}, "
                         f"missing {summary.iv_missing}, errors {errors}")  # fmt: skip
+        except BaseException:
+            pool.shutdown(wait=False, cancel_futures=True)
+            raise
+        pool.shutdown(wait=True)
     summary.seconds = time.perf_counter() - t0
     return summary

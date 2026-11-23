@@ -943,7 +943,8 @@ def hist_build(
     )  # fmt: skip
     typer.echo(
         f"HIST-1 done in {s.seconds / 60:.0f} min: closes +{s.closes_added}, yields "
-        f"+{s.yields_added}, events +{s.events_added}, ATM IV +{s.iv_added} "
+        f"+{s.yields_added}, events +{s.events_added} (unusable dividends "
+        f"+{s.unusable_added}), ATM IV +{s.iv_added} "
         f"(missing {s.iv_missing}), conflicts {s.conflicts}, fetch errors "
         f"{len(s.fetch_errors)} (re-run to retry)"
     )
@@ -967,5 +968,8 @@ def hist_status() -> None:
     reasons = Counter((m[0], m[3]) for m in store.missing())
     for (series, reason), n in sorted(reasons.items()):
         typer.echo(f"  missing {series} {reason}: {n}")
+    unusable = Counter((u[0], u[3]) for u in store.unusable())
+    for (kind, reason), n in sorted(unusable.items()):
+        typer.echo(f"  unusable {kind} {reason}: {n} (those sessions are excluded from returns)")
     for c in store.conflicts()[:20]:
         typer.echo(f"  conflict {c.series} {c.symbol} {c.session}: kept {c.kept_hash[:12]}")

@@ -19,6 +19,7 @@ import numpy as np
 
 from remy_finance.baselines.mkt1 import MKT_1, YEAR_SECONDS
 from remy_finance.baselines.pricing import implied_vol
+from remy_finance.data.thetadata import is_standard_root
 from remy_finance.data.timeutil import NEW_YORK
 
 TARGET_DAYS = 30
@@ -69,11 +70,15 @@ class IVResult:
         return tuple(sorted(out))
 
 
-def rows_from_vendor(raw: Sequence[Mapping[str, object]]) -> list[ChainRow]:
-    """ThetaData ``option/history/eod`` rows (flattened) to ``ChainRow``; malformed rows
-    are skipped."""
+def rows_from_vendor(raw: Sequence[Mapping[str, object]], underlying: str) -> list[ChainRow]:
+    """ThetaData ``option/history/eod`` rows (flattened) to ``ChainRow``. Only
+    standard-deliverable roots are kept, as MKT-1 does (DR-0014, DR-0021): an adjusted root
+    (``XYZ1``) shares strikes and expirations with ``XYZ`` but not its deliverable.
+    Malformed rows are skipped."""
     out: list[ChainRow] = []
     for r in raw:
+        if not is_standard_root(underlying, str(r.get("symbol") or underlying)):
+            continue
         try:
             right = str(r.get("right", "")).upper()
             out.append(

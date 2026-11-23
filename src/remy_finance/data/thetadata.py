@@ -51,6 +51,13 @@ RATE_TENORS = {
 }
 
 
+def is_standard_root(underlying: str, root: str) -> bool:
+    """A standard-deliverable option root: the underlying itself, with no numeric suffix
+    (an adjusted root such as ``XYZ1`` after a special dividend or merger is not)."""
+    root = root.upper()
+    return bool(root) and root == underlying.upper() and not root[-1].isdigit()
+
+
 class ThetaDataError(RuntimeError):
     def __init__(self, status: int | None, message: str) -> None:
         super().__init__(f"ThetaData error {status}: {message}")
@@ -117,7 +124,7 @@ class ThetaDataSource:
     @staticmethod
     def _contract(underlying: str, row: dict[str, Any]) -> OptionContract:
         root = str(row["symbol"]).upper()
-        standard = root == underlying and not root[-1].isdigit()
+        standard = is_standard_root(underlying, root)
         return OptionContract.build(
             underlying,
             date.fromisoformat(str(row["expiration"])),

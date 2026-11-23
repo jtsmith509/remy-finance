@@ -31,6 +31,8 @@
   - `obs`: one row per (series, symbol, session), holding a frozen `HistObservation`. The series are `CLOSE`, `ATMIV30`, `YIELD_1M`, `YIELD_3M` and `YIELD_10Y`.
   - `events`: dividends and splits, as the existing `DividendEvent` and `CorporateAction` records from Massive.
   - `missing`: deterministic derivation failures, with their reason.
+  - `events` are keyed on the market fact: (kind, symbol, date, and for dividends their type). `ingest_time` is never part of the key (review fix HIST1-PIT-01).
+  - `unusable`: vendor dividends that couldn't be used (no declaration date, or not USD). Their ex-date return is excluded with `DIVIDEND_UNUSABLE:<reason>`, visible from that day's 09:30 open, rather than read as a price loss (review fix TR-2).
   - **Revisions:** a value that arrives again unchanged is a no-op. A *different* value for an existing key is never written over: it goes to an append-only `conflicts` table and is reported.
 - **Public times** (B10; backfills keep the real historical public time, and `ingest_time` records when we fetched it):
   - **Closes and ATM IV:** 17:15 ET on the session, ThetaData's end-of-day report time (DR-0026).
@@ -56,10 +58,15 @@
 - **Backfill:** `remy hist build --start … --end …`.
   - **Coverage:** UNIV-CANDIDATES-1, SPY and the sector SPDRs, with 4 parallel ThetaData requests.
   - **Resumable:** keys already stored are skipped.
-  - **Missing data:** fetch errors are retried on the next run, never recorded as missing.
+  - **Missing data:** fetch errors are retried on the next run, never recorded as missing. Missing inputs count as fetch errors too: no public 1-month or 3-month yield within 10 days, or an empty chain response (review fixes HIST1-PIT-02 and H3).
 - **Not in this DR:**
   - the nightly HIST-1 and CLOSE-1 update, and tracked-only capture (EVAL-2 §6.3), which come with the scheduler work before the cut-over;
   - B12's eligibility and fallback rules, which go in the factor-model DR.
+
+## Review (2026-11-23)
+An internal adversarial review found 9 distinct defects, all fixed before the first backfill with regression tests: see `docs/review/HIST-1-findings.md`. The schema is now `HIST-1/2`.
+
+**Open question for Josh:** should a USD dividend with no declaration date be kept, with public time 09:30 ET on its ex-date? That can't look ahead, and the session would stay in the fits. It is excluded for now.
 
 ## Consequences
 - **One store** backs `CLOSE-1` (its `CLOSE` series), so the official-close store is a view of HIST-1 rather than a second copy.
