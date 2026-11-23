@@ -17,7 +17,7 @@ from typing import ClassVar, Self
 
 from pydantic import Field, field_validator, model_validator
 
-from remy_finance.core import Candidate, Mode, Priceability, Record
+from remy_finance.core import Candidate, Mode, Priceability, Record, Session
 from remy_finance.core.exact import exact_decimal
 from remy_finance.core.types import Dec, NonNegDec, UtcDatetime
 
@@ -251,3 +251,55 @@ class JournalEvent(Record):
         data = {**fields, "evidence_type": type(evidence).__name__}
         data["evidence"] = evidence.canonical_json()
         return cls.model_validate(data)
+
+
+class RunStatusKind(StrEnum):
+    """EVAL-2 §4.3: how one engine's run on one scheduled slot ended."""
+
+    OK = "ok"  # ran and recorded at least one recommendation
+    NULL = "null"  # ran; nothing in its pool passed its own rules (a null decision)
+    FAILED = "failed"  # raised; ``reason`` names the exception type
+    SKIPPED = "skipped"  # the slot was skipped (gap, dirty tree, reconciled late)
+    NOT_SCHEDULED = "not_scheduled"  # the engine is not scheduled on this slot
+
+
+class RunStatus(Record):
+    """One engine's status on one scheduled decision slot (EVAL-2 §4.3, DR-0047).
+
+    Exactly one per (session date, session, engine) in a registry: the first recorded
+    wins. ``recorded_at`` places it in the cutoff state (EVAL-2 §4.1)."""
+
+    mode: Mode
+    session_date: date
+    session: Session
+    slot_time: UtcDatetime  # the scheduled decision time (SNAPTIMES-1, half days included)
+    engine: str = Field(min_length=1)
+    engine_version: str | None = None
+    status: RunStatusKind
+    reason: str = ""
+    snapshot_id: str | None = Field(default=None, min_length=64, max_length=64)
+    run_log_hash: str | None = Field(default=None, min_length=64, max_length=64)
+    n_selected: int = Field(default=0, ge=0)
+    code_commit: str | None = None
+    recorded_at: UtcDatetime
+
+    @property
+    def status_key(self) -> str:
+        return status_key(self.session_date, self.session, self.engine)
+
+    @model_validator(mode="after")
+    def _check(self) -> Self:
+        ran = self.status in (RunStatusKind.OK, RunStatusKind.NULL)
+        if ran and (self.run_log_hash is None or self.snapshot_id is None):
+            raise ValueError(f"{self.status.value} needs the run log hash and the board")
+        if not ran and self.run_log_hash is not None:
+            raise ValueError(f"{self.status.value} has no run log")
+        if (self.status is RunStatusKind.OK) != (self.n_selected > 0):
+            raise ValueError("ok means at least one selection; any other status, none")
+        if not ran and not self.reason:
+            raise ValueError(f"{self.status.value} needs a reason")
+        return self
+
+
+def status_key(session_date: date, session: Session, engine: str) -> str:
+    return f"{session_date.isoformat()}|{session.value}|{engine}"

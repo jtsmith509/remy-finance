@@ -11,7 +11,10 @@ from remy_finance.registry.records import (
     Recommendation,
     ReturnBins,
     ReturnDistribution,
+    RunStatus,
+    RunStatusKind,
     derive_trade_id,
+    status_key,
 )
 from remy_finance.registry.store import (
     GENESIS,
@@ -38,9 +41,12 @@ __all__ = [
     "ReturnBins",
     "ReturnDistribution",
     "Row",
+    "RunStatus",
+    "RunStatusKind",
     "VerifyReport",
     "chain_hash",
     "check_next",
     "derive_trade_id",
     "registry_path",
+    "status_key",
 ]

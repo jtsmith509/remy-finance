@@ -117,7 +117,7 @@ def test_rows_chain_from_genesis(reg: Registry) -> None:
         assert b.chain_hash == chain_hash(a.chain_hash, b.record_json)
     report = reg.verify()
     assert report.ok, report.problems
-    assert report.rows == {"recommendations": 1, "journal": 4}
+    assert report.rows == {"recommendations": 1, "journal": 4, "run_status": 0}
     assert report.heads["journal"] == rows[-1].chain_hash
 
 

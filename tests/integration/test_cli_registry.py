@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sqlite3
+from datetime import date
 from pathlib import Path
 
 import pytest
@@ -51,3 +52,32 @@ def test_registry_commands(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> N
 
     assert runner.invoke(cli.app, ["registry", "verify", "--mode", "replay"]).exit_code == 1
     assert runner.invoke(cli.app, ["registry", "verify", "--mode", "bogus"]).exit_code != 0
+
+
+def test_registry_migrate_backs_up_migrates_and_verifies(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from remy_finance.core import Mode
+    from remy_finance.registry import Registry, registry_path
+    from tests.unit.registry.helpers import recommendation
+    from tests.unit.registry.test_run_status import legacy_registry
+
+    monkeypatch.setenv("REMY_DATA_DIR", str(tmp_path))
+    export = tmp_path / "export"
+    monkeypatch.setenv("REMY_EXPORT_REPO", str(export))
+    path = registry_path(tmp_path, Mode.PROSPECTIVE)
+    path.parent.mkdir(parents=True)
+    legacy_registry(path)
+    with Registry.open(path) as reg:
+        reg.add_recommendation(recommendation())
+        reg.export(export, date(2026, 11, 24))
+    result = runner.invoke(cli.app, ["registry", "migrate"])
+    assert result.exit_code == 0, result.output
+    assert "prospective: now REGISTRY-2; verify OK; chain heads unchanged" in result.output
+    assert "exported rows checked 1" in result.output
+    assert "replay: no registry" in result.output
+    assert list((tmp_path / "backup").glob("prospective-*.sqlite"))
+    again = runner.invoke(cli.app, ["registry", "migrate"])
+    assert again.exit_code == 0 and "already REGISTRY-2" in again.output
+    statuses = runner.invoke(cli.app, ["registry", "statuses"])
+    assert statuses.exit_code == 0

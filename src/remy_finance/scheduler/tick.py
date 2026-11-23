@@ -59,6 +59,8 @@ from remy_finance.snapshots.store import (
 )
 
 EXECUTION_DELAY = timedelta(minutes=5)
+GAP_REASON = "decision board not captured (gap)"
+LATE_REASON = "session reconciled late: the scheduler was not running in its window"
 
 
 def _replace_text(path: Path, text: str) -> None:
@@ -278,8 +280,11 @@ class Tick:
         dec_state, decision = self._slot(
             day, session, SnapshotKind.DECISION, snapshot_time(day, session, SnapshotKind.DECISION)
         )
-        if decision is not None and not self.markers.done(day, f"{key}-recommend"):
+        if decision is None:
+            self.pipeline.record_skipped(day, session, GAP_REASON)
+        elif not self.markers.done(day, f"{key}-recommend"):
             self.markers.mark(day, f"{key}-recommend", "SKIPPED: session reconciled late")
+            self.pipeline.record_skipped(day, session, LATE_REASON, decision)
         ex_state, execution = (
             self._slot(
                 day,
@@ -310,6 +315,8 @@ class Tick:
         dec_state, decision = self._slot(day, session, SnapshotKind.DECISION, dec_time)
         if dec_state is Slot.PENDING:
             return
+        if decision is None:
+            self.pipeline.record_skipped(day, session, GAP_REASON)
         if decision is not None and not self.markers.done(day, f"{key}-recommend"):
             try:
                 self.pipeline.code_commit = self.commit()
@@ -319,6 +326,7 @@ class Tick:
                 record_failure(self.logs_dir, f"{key}-recommend", e, self.clock())
                 self.notify("REMY scheduler", "recommendations skipped: uncommitted changes")
                 self.markers.mark(day, f"{key}-recommend", "SKIPPED: uncommitted changes")
+                self.pipeline.record_skipped(day, session, "uncommitted changes", decision)
                 self.log(f"{session.value}: recommendations skipped (dirty tree)")
             else:
                 self._recommend(day, session, decision)
@@ -351,7 +359,15 @@ class Tick:
         ok = False
         with self.guard(f"{key}-recommend"):
             picks = self.pipeline.recommend(decision)
-            self.markers.mark(day, f"{key}-recommend", ",".join(picks))
+            # Each engine ran on its own (DR-0047): a failed one is recorded and notified
+            # here, and the others' picks stand.
+            for engine, err in self.pipeline.failures:
+                record_failure(self.logs_dir, f"{key}-recommend-{engine}", err, self.clock())
+                self.notify("REMY scheduler", f"{engine} failed: {type(err).__name__}: {err}")
+                self.log(f"FAILED {key}-recommend {engine}: {type(err).__name__}: {err}")
+            failed = ",".join(e for e, _ in self.pipeline.failures)
+            note = ",".join(picks) + (f"; FAILED: {failed}" if failed else "")
+            self.markers.mark(day, f"{key}-recommend", note)
             self.log(f"{session.value}: {len(picks)} recommendations")
             ok = True
         if not ok:

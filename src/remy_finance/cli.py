@@ -501,6 +501,89 @@ def registry_annotate(
             typer.echo(f"{t}: {'annotated' if ev else 'already annotated (nothing written)'}")
 
 
+@registry_app.command("migrate")
+def registry_migrate(
+    mode: Annotated[str, typer.Option(help="prospective, replay or both")] = "both",
+) -> None:
+    """Upgrade REGISTRY-1 databases to REGISTRY-2, adding the run-status table (DR-0047).
+
+    Holds the scheduler's tick lock throughout, verifies first (with the export for the
+    prospective registry), takes a backup, migrates in one transaction, then verifies
+    again and checks that the recommendation and journal chain heads are unchanged."""
+    import fcntl
+
+    from remy_finance.registry import Registry, registry_path
+
+    data = _data_dir()
+    modes = [Mode.PROSPECTIVE, Mode.REPLAY] if mode == "both" else [_mode(mode)]
+    lock = data / "scheduler" / "tick.lock"
+    lock.parent.mkdir(parents=True, exist_ok=True)
+    failed = False
+    with lock.open("a") as fh:
+        typer.echo("waiting for the scheduler tick lock ...")
+        fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
+        for m in modes:
+            path = registry_path(data, m)
+            if not path.exists():
+                typer.echo(f"{m.value.lower()}: no registry at {path}; nothing to migrate")
+                continue
+            export = _export_repo() if m is Mode.PROSPECTIVE else None
+            export = export if export is not None and export.exists() else None
+            with Registry.open(path, m) as reg:
+                before = reg.verify(export_dir=export)
+                if not before.ok:
+                    typer.echo(f"{m.value.lower()}: verification failed, not migrating:")
+                    for problem in before.problems[:10]:
+                        typer.echo(f"  FAIL {problem}")
+                    failed = True
+                    continue
+                if reg.has_run_status:
+                    typer.echo(f"{m.value.lower()}: already {reg.schema}")
+                    continue
+                dest = reg.backup(data / "backup")
+            typer.echo(f"{m.value.lower()}: backup written: {dest}")
+            Registry.migrate(path)
+            with Registry.open(path, m) as reg:
+                after = reg.verify(export_dir=export)
+                same = all(after.heads[t] == before.heads[t] for t in before.heads)
+                verdict = "OK" if after.ok else "FAILED"
+                typer.echo(
+                    f"{m.value.lower()}: now {reg.schema}; verify {verdict}; "
+                    f"chain heads {'unchanged' if same else 'CHANGED'}; "
+                    f"exported rows checked {after.exported_rows_checked}"
+                )
+                for problem in after.problems[:10]:
+                    typer.echo(f"  FAIL {problem}")
+                failed |= not (after.ok and same)
+        fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
+    raise typer.Exit(1 if failed else 0)
+
+
+@registry_app.command("statuses")
+def registry_statuses(
+    mode: ModeOpt = "prospective",
+    last: Annotated[int, typer.Option(help="Also list the last N slots")] = 6,
+) -> None:
+    """Run-status records (EVAL-2 §4.3, DR-0047): counts by engine and status, and the
+    latest slots."""
+    with _open_registry(mode) as reg:
+        if not reg.has_run_status:
+            typer.echo(f"{reg.schema}: no run-status table yet (run `remy registry migrate`)")
+            raise typer.Exit(1)
+        statuses = reg.run_statuses()
+    counts = Counter((s.engine, s.status.value) for s in statuses)
+    for (engine, status), n in sorted(counts.items()):
+        typer.echo(f"{engine:8} {status:14} {n}")
+    slots = sorted({(s.session_date, s.session.value) for s in statuses})[-last:]
+    for day, session in slots:
+        row = [s for s in statuses if (s.session_date, s.session.value) == (day, session)]
+        text = "; ".join(
+            f"{s.engine} {s.status.value}" + (f" ({s.reason[:60]})" if s.reason else "")
+            for s in sorted(row, key=lambda x: x.engine)
+        )
+        typer.echo(f"{day} {session:5} {text}")
+
+
 @registry_app.command("backup")
 def registry_backup(mode: ModeOpt = "prospective") -> None:
     """Copy the registry to data/backup/ with SQLite's online backup (DR-0012)."""

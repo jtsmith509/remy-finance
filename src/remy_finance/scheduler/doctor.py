@@ -129,6 +129,15 @@ def run_checks(
                     detail,
                 )
             )
+            if not reg.has_run_status:
+                out.append(
+                    Check(
+                        f"Run status ({mode.value.lower()})",
+                        Status.WARN,
+                        f"{reg.schema}: run statuses aren't recorded; run `remy registry "
+                        "migrate` outside session hours (DR-0047)",
+                    )
+                )
             if mode is Mode.PROSPECTIVE:
                 from remy_finance.execution.engine import PaperEngine
 

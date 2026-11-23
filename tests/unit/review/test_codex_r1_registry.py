@@ -114,4 +114,4 @@ def test_f04_verify_uses_one_snapshot_while_another_writer_appends(
     monkeypatch.setattr(reg, "rows", rows_with_concurrent_commit)
     report = reg.verify()
     assert report.ok, report.problems
-    assert report.rows == {"recommendations": 1, "journal": 0}  # one consistent snapshot
+    assert report.rows == {"recommendations": 1, "journal": 0, "run_status": 0}  # one snapshot

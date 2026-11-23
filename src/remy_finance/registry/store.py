@@ -1,6 +1,7 @@
 """The paper-trade registry: an append-only SQLite store with a hash chain (handoff R1.1, D12).
 
-Two tables, ``recommendations`` and ``journal``. Each row stores the record's canonical
+Chained tables ``recommendations``, ``journal`` and, from schema ``REGISTRY-2`` (DR-0047),
+``run_status`` (EVAL-2 §4.3). Each row stores the record's canonical
 JSON, its SHA-256 (``record_hash``), the previous row's chain hash (``prev_chain``) and its
 own chain hash ``chain_hash = sha256(prev_chain + "\\n" + record_json)``. The first row of
 each table chains from ``GENESIS``. SQLite triggers abort any UPDATE or DELETE on every
@@ -33,12 +34,20 @@ from typing import Literal
 from remy_finance.core import Mode
 from remy_finance.core.canonical import sha256_hex
 from remy_finance.registry.lifecycle import LifecycleError, check_next
-from remy_finance.registry.records import JournalEvent, Recommendation
+from remy_finance.registry.records import JournalEvent, Recommendation, RunStatus
 
-SCHEMA_VERSION = "REGISTRY-1"
+SCHEMA_VERSION = "REGISTRY-2"
+LEGACY_SCHEMA = "REGISTRY-1"  # readable; ``Registry.migrate`` adds run_status (DR-0047)
 GENESIS = "0" * 64
-Table = Literal["recommendations", "journal"]
-TABLES: tuple[Table, ...] = ("recommendations", "journal")
+Table = Literal["recommendations", "journal", "run_status"]
+TABLES_V1: tuple[Table, ...] = ("recommendations", "journal")
+TABLES: tuple[Table, ...] = ("recommendations", "journal", "run_status")
+# The column each chained table keeps unique (journal rows repeat trade ids).
+KEY_COLUMN: dict[str, str | None] = {
+    "recommendations": "trade_id",
+    "journal": None,
+    "run_status": "status_key",
+}
 
 _SCHEMA = """
 CREATE TABLE meta (
@@ -64,54 +73,61 @@ CREATE TABLE journal (
 ) STRICT;
 CREATE INDEX journal_trade ON journal(trade_id, seq);
 """
+_RUN_STATUS_SCHEMA = """
+CREATE TABLE run_status (
+    seq         INTEGER PRIMARY KEY,
+    status_key  TEXT NOT NULL UNIQUE,
+    record_json TEXT NOT NULL,
+    record_hash TEXT NOT NULL,
+    prev_chain  TEXT NOT NULL,
+    chain_hash  TEXT NOT NULL UNIQUE
+) STRICT;
+"""
 
-IMMUTABLE_TABLES = ("meta", "recommendations", "journal")
-CHAINED_TABLES = ("recommendations", "journal")
-TRIGGERS = (
-    *(f"{t}_no_{op}" for t in IMMUTABLE_TABLES for op in ("update", "delete")),
-    "meta_no_insert",
-    *(f"{t}_next_row_only" for t in CHAINED_TABLES),
-)
 
-
-def _trigger_sql() -> str:
+def _trigger_sql(tables: Sequence[str] = TABLES) -> str:
     """UPDATE and DELETE always abort. INSERT must be exactly the next row of the chain:
     ``INSERT OR REPLACE`` deletes a conflicting row *without* firing DELETE triggers, so the
     insert trigger refuses any row that would collide with an existing one."""
     parts = [
         f"CREATE TRIGGER {t}_no_{op.lower()} BEFORE {op} ON {t} "
         f"BEGIN SELECT RAISE(ABORT, 'registry is append-only: {op} on {t} refused'); END;"
-        for t in IMMUTABLE_TABLES
+        for t in ("meta", *tables)
         for op in ("UPDATE", "DELETE")
     ]
     parts.append(
         "CREATE TRIGGER meta_no_insert BEFORE INSERT ON meta "
         "BEGIN SELECT RAISE(ABORT, 'registry is append-only: INSERT on meta refused'); END;"
     )
-    for t in CHAINED_TABLES:
-        unique_trade = f" OR EXISTS (SELECT 1 FROM {t} WHERE trade_id = NEW.trade_id)"
-        parts.append(
-            f"CREATE TRIGGER {t}_next_row_only BEFORE INSERT ON {t} WHEN "
-            f"NEW.seq IS NOT (SELECT COALESCE(MAX(seq), 0) + 1 FROM {t}) "
-            f"OR NEW.prev_chain IS NOT COALESCE("
-            f"(SELECT chain_hash FROM {t} ORDER BY seq DESC LIMIT 1), '{GENESIS}') "
-            f"OR EXISTS (SELECT 1 FROM {t} WHERE chain_hash = NEW.chain_hash)"
-            f"{unique_trade if t == 'recommendations' else ''} "
-            f"BEGIN SELECT RAISE(ABORT, 'registry is append-only: "
-            f"{t} insert is not the next row of the chain'); END;"
-        )
+    for t in tables:
+        parts.append(_next_row_trigger(t))
     return "\n".join(parts)
+
+
+def _next_row_trigger(t: str) -> str:
+    key = KEY_COLUMN[t]
+    unique = f" OR EXISTS (SELECT 1 FROM {t} WHERE {key} = NEW.{key})" if key else ""
+    return (
+        f"CREATE TRIGGER {t}_next_row_only BEFORE INSERT ON {t} WHEN "
+        f"NEW.seq IS NOT (SELECT COALESCE(MAX(seq), 0) + 1 FROM {t}) "
+        f"OR NEW.prev_chain IS NOT COALESCE("
+        f"(SELECT chain_hash FROM {t} ORDER BY seq DESC LIMIT 1), '{GENESIS}') "
+        f"OR EXISTS (SELECT 1 FROM {t} WHERE chain_hash = NEW.chain_hash)"
+        f"{unique} "
+        f"BEGIN SELECT RAISE(ABORT, 'registry is append-only: "
+        f"{t} insert is not the next row of the chain'); END;"
+    )
 
 
 def _normalize_sql(sql: str) -> str:
     return " ".join(sql.replace(";", " ").split()).lower()
 
 
-def _expected_triggers() -> dict[str, str]:
+def _expected_triggers(tables: Sequence[str] = TABLES) -> dict[str, str]:
     """name -> normalized definition of every append-only trigger, from the same SQL that
     creates them, so ``verify`` can tell an intact guard from a same-name no-op."""
     out: dict[str, str] = {}
-    for part in _trigger_sql().split("END;"):
+    for part in _trigger_sql(tables).split("END;"):
         if part.strip():
             stmt = part.strip() + " END"
             out[stmt.split()[2]] = _normalize_sql(stmt)
@@ -119,6 +135,7 @@ def _expected_triggers() -> dict[str, str]:
 
 
 EXPECTED_TRIGGERS = _expected_triggers()
+EXPECTED_TRIGGERS_V1 = _expected_triggers(TABLES_V1)
 
 
 @contextmanager
@@ -161,6 +178,7 @@ class Row:
     prev_chain: str
     chain_hash: str
     kind: str | None = None  # the journal's SQL kind column (None for recommendations)
+    # ``trade_id`` holds the row's key: the trade id, or the status key for run_status.
 
     def export_line(self, *, legacy: bool = False) -> str:
         """The canonical export line. ``legacy``: the format written before the kind column
@@ -170,7 +188,7 @@ class Row:
         data: dict[str, object] = {
             "table": self.table,
             "seq": self.seq,
-            "trade_id": self.trade_id,
+            ("status_key" if self.table == "run_status" else "trade_id"): self.trade_id,
             "record_hash": self.record_hash,
             "prev_chain": self.prev_chain,
             "chain_hash": self.chain_hash,
@@ -202,10 +220,13 @@ class VerifyReport:
 class Registry:
     """One registry database (one mode). Use ``Registry.create`` once, then ``open``."""
 
-    def __init__(self, path: Path, conn: sqlite3.Connection, mode: Mode) -> None:
+    def __init__(
+        self, path: Path, conn: sqlite3.Connection, mode: Mode, schema: str = SCHEMA_VERSION
+    ) -> None:
         self.path = path
         self._conn = conn
         self.mode = mode
+        self.schema = schema
         # Read caches. The tables are append-only, so parsed rows never go stale: each read
         # tops the cache up with rows newer than the last one seen (including rows other
         # processes wrote). ``verify`` never uses them: it re-reads and re-parses raw rows.
@@ -228,7 +249,9 @@ class Registry:
                 f"INSERT INTO meta(key, value) VALUES ('mode', '{mode.value}'), "
                 f"('schema', '{SCHEMA_VERSION}');"
             )
-            conn.executescript("BEGIN;" + _SCHEMA + meta + _trigger_sql() + "COMMIT;")
+            conn.executescript(
+                "BEGIN;" + _SCHEMA + _RUN_STATUS_SCHEMA + meta + _trigger_sql() + "COMMIT;"
+            )
         return cls(path, conn, mode)
 
     @classmethod
@@ -237,12 +260,61 @@ class Registry:
             raise FileNotFoundError(f"no registry at {path}")
         conn = _connect(path)
         meta = dict(conn.execute("SELECT key, value FROM meta").fetchall())
-        if meta.get("schema") != SCHEMA_VERSION:
-            raise RegistryError(f"{path}: schema {meta.get('schema')!r}, need {SCHEMA_VERSION}")
+        schema = meta.get("schema")
+        if schema not in (SCHEMA_VERSION, LEGACY_SCHEMA):
+            raise RegistryError(f"{path}: schema {schema!r}, need {SCHEMA_VERSION}")
         stored = Mode(meta["mode"])
         if mode is not None and stored is not mode:
             raise RegistryError(f"{path} is a {stored.value} registry, not {mode.value}")
-        return cls(path, conn, stored)
+        return cls(path, conn, stored, str(schema))
+
+    @classmethod
+    def migrate(cls, path: Path, now: datetime | None = None) -> bool:
+        """Upgrade a ``REGISTRY-1`` database to ``REGISTRY-2`` in one transaction: add the
+        chained ``run_status`` table and its triggers, and set the schema (DR-0047). The
+        meta guards are dropped and recreated inside the transaction to change the one
+        schema row and add a ``migrated`` row; no chained row is touched, so every chain
+        head and exported line is unchanged. Returns False if already at REGISTRY-2.
+        Take a backup first (``remy registry migrate`` does)."""
+        conn = _connect(path)
+        try:
+            meta = dict(conn.execute("SELECT key, value FROM meta").fetchall())
+            if meta.get("schema") == SCHEMA_VERSION:
+                return False
+            if meta.get("schema") != LEGACY_SCHEMA:
+                raise RegistryError(f"{path}: schema {meta.get('schema')!r}, cannot migrate")
+            stamp = (now or datetime.now(UTC)).astimezone(UTC).isoformat()
+            meta_guards = "\n".join(
+                p + " END;" for p in _trigger_sql(()).split("END;") if p.strip() and "ON meta" in p
+            )
+            new_guards = "\n".join(
+                p + " END;"
+                for p in _trigger_sql(("run_status",)).split("END;")
+                if p.strip() and " ON run_status " in p
+            )
+            conn.executescript(
+                "BEGIN IMMEDIATE;"
+                "DROP TRIGGER meta_no_update; DROP TRIGGER meta_no_delete;"
+                "DROP TRIGGER meta_no_insert;"
+                f"UPDATE meta SET value = '{SCHEMA_VERSION}' WHERE key = 'schema';"
+                f"INSERT INTO meta(key, value) VALUES ('migrated', '{LEGACY_SCHEMA} to "
+                f"{SCHEMA_VERSION} at {stamp}');"
+                + meta_guards
+                + _RUN_STATUS_SCHEMA
+                + new_guards
+                + "COMMIT;"
+            )
+            return True
+        finally:
+            conn.close()
+
+    @property
+    def tables(self) -> tuple[Table, ...]:
+        return TABLES if self.schema == SCHEMA_VERSION else TABLES_V1
+
+    @property
+    def has_run_status(self) -> bool:
+        return self.schema == SCHEMA_VERSION
 
     @classmethod
     def open_or_create(cls, path: Path, mode: Mode) -> Registry:
@@ -337,6 +409,39 @@ class Registry:
                 history.append(event)
             return rows
 
+    def add_run_status(self, status: RunStatus) -> Row | None:
+        """Record one engine's status on one slot (EVAL-2 §4.3). The first status for a
+        (session date, session, engine) wins: a later one for the same key is not
+        recorded and None is returned."""
+        if not self.has_run_status:
+            raise RegistryError(
+                f"{self.path} is {self.schema}: run `remy registry migrate` to record run "
+                "statuses (DR-0047)"
+            )
+        if status.mode is not self.mode:
+            raise RegistryError(
+                f"{status.mode.value} status refused by the {self.mode.value} registry"
+            )
+        with self._write() as conn:
+            key = status.status_key
+            if conn.execute("SELECT 1 FROM run_status WHERE status_key = ?", (key,)).fetchone():
+                return None
+            return _insert(conn, "run_status", key, status.canonical_json())
+
+    def run_statuses(self) -> list[RunStatus]:
+        if not self.has_run_status:
+            return []
+        rows = self._conn.execute("SELECT record_json FROM run_status ORDER BY seq")
+        return [RunStatus.from_canonical_json(r[0]) for r in rows]
+
+    def run_status(self, key: str) -> RunStatus | None:
+        if not self.has_run_status:
+            return None
+        row = self._conn.execute(
+            "SELECT record_json FROM run_status WHERE status_key = ?", (key,)
+        ).fetchone()
+        return None if row is None else RunStatus.from_canonical_json(row[0])
+
     # ------------------------------------------------------------------ reads
 
     def _load_recommendations(self) -> None:
@@ -374,8 +479,9 @@ class Registry:
 
     def rows(self, table: Table, after_seq: int = 0) -> list[Row]:
         kind = "kind" if table == "journal" else "NULL"
+        key = "status_key" if table == "run_status" else "trade_id"
         cur = self._conn.execute(
-            f"SELECT seq, trade_id, record_json, record_hash, prev_chain, chain_hash, {kind} "
+            f"SELECT seq, {key}, record_json, record_hash, prev_chain, chain_hash, {kind} "
             f"FROM {table} WHERE seq > ? ORDER BY seq",
             (after_seq,),
         )
@@ -420,15 +526,20 @@ class Registry:
         report = VerifyReport(mode=self.mode)
         problems = report.problems
         meta = dict(self._conn.execute("SELECT key, value FROM meta").fetchall())
-        if meta.get("mode") != self.mode.value or meta.get("schema") != SCHEMA_VERSION:
+        if meta.get("mode") != self.mode.value or meta.get("schema") != self.schema:
             problems.append(f"meta table altered: {meta}")
+        if set(meta) - {"mode", "schema", "migrated"}:
+            problems.append(f"meta table has unexpected keys: {sorted(meta)}")
         installed = {
             str(name): _normalize_sql(str(sql or ""))
             for name, sql in self._conn.execute(
                 "SELECT name, sql FROM sqlite_master WHERE type = 'trigger'"
             )
         }
-        for name, expected in EXPECTED_TRIGGERS.items():
+        expected_triggers = (
+            EXPECTED_TRIGGERS if self.schema == SCHEMA_VERSION else EXPECTED_TRIGGERS_V1
+        )
+        for name, expected in expected_triggers.items():
             if name not in installed:
                 problems.append(f"append-only trigger {name} is missing")
             elif installed[name] != expected:  # same name, different body (Codex R1.1 F02)
@@ -437,7 +548,7 @@ class Registry:
         trade_ids: set[str] = set()
         by_seq: dict[int, str] = {}
         histories: dict[str, list[JournalEvent]] = defaultdict(list)
-        for table in TABLES:
+        for table in self.tables:
             prev = GENESIS
             rows = self.rows(table)
             report.rows[table] = len(rows)
@@ -468,6 +579,8 @@ class Registry:
         histories: dict[str, list[JournalEvent]],
     ) -> list[str]:
         out: list[str] = []
+        if row.table == "run_status":
+            return self._check_status(row)
         record: Recommendation | JournalEvent
         try:
             if row.table == "recommendations":
@@ -502,9 +615,23 @@ class Registry:
         by_seq[row.seq] = record.trade_id
         return out
 
+    def _check_status(self, row: Row) -> list[str]:
+        try:
+            status = RunStatus.from_canonical_json(row.record_json)
+        except ValueError as e:
+            return [f"record does not validate: {e}"]
+        out: list[str] = []
+        if status.canonical_json() != row.record_json:
+            out.append("record_json is not canonical")
+        if status.mode is not self.mode:
+            out.append(f"{status.mode.value} status in a {self.mode.value} registry")
+        if status.status_key != row.trade_id:
+            out.append("status_key column differs from the record")
+        return out
+
     def _check_export(self, export_dir: Path, problems: list[str]) -> int:
         export_dir = export_dir / self.mode.value.lower()
-        current = {(r.table, r.seq): r for t in TABLES for r in self.rows(t)}
+        current = {(r.table, r.seq): r for t in self.tables for r in self.rows(t)}
         checked = 0
         for path in sorted(export_dir.glob("*/*/*.jsonl")):
             for n, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
@@ -526,8 +653,8 @@ class Registry:
 
     def export(self, export_dir: Path, day: date, *, lock: bool = True) -> list[Row]:
         """Write rows not yet exported to ``export_dir/<mode>/YYYY/MM/DD.jsonl`` (one JSON line
-        per row, recommendations then journal, in sequence order). Earlier lines are kept
-        unchanged; the file is replaced atomically. Returns the rows written.
+        per row, recommendations, journal, then run statuses, in sequence order). Earlier
+        lines are kept unchanged; the file is replaced atomically. Returns the rows written.
 
         The whole read-append-publish runs under a cross-process export lock and one
         consistent database snapshot, so two exporters can never erase each other's lines
@@ -536,7 +663,7 @@ class Registry:
         with export_lock(export_dir) if lock else nullcontext(), self._read_snapshot():
             mode_dir = export_dir / self.mode.value.lower()
             exported = _exported_heads(mode_dir)
-            new = [r for t in TABLES for r in self.rows(t, exported.get(t, 0))]
+            new = [r for t in self.tables for r in self.rows(t, exported.get(t, 0))]
             if not new:
                 return []
             path = mode_dir / f"{day:%Y}" / f"{day:%m}" / f"{day:%d}.jsonl"
@@ -581,7 +708,8 @@ def _insert(
     row = Row(
         table, seq + 1, trade_id, text, sha256_hex(text), prev, chain_hash(prev, text), kind
     )  # the returned row carries the stored kind too (Codex V07)
-    cols = ["seq", "trade_id", "record_json", "record_hash", "prev_chain", "chain_hash"]
+    key_col = "status_key" if table == "run_status" else "trade_id"
+    cols = ["seq", key_col, "record_json", "record_hash", "prev_chain", "chain_hash"]
     values: list[object] = [row.seq, trade_id, text, row.record_hash, prev, row.chain_hash]
     if kind is not None:
         cols.append("kind")
