@@ -1,6 +1,6 @@
 # DR-0049: MKTV-1, its paths and the VRP estimate
 
-- **Status:** proposed (2026-11-24). Josh answered the five design questions (below). The details marked **(proposed)** await his confirmation.
+- **Status:** proposed (2026-11-24). Josh answered the six design questions (below). The rest awaits his confirmation.
 - **Date:** 2026-11-24
 - **Source:** R2 brief P2 (MKTV-1, B03), P6 (sticky moneyness), P7 (exit fills on paths), P8 (paths and time), P9 (VRP estimate), B02 (VRP labels), B05 (forwards on paths), B06 (cadence); EVAL-2 §1, §6 and §7.2; DR-0037 (MKT-1's mid-anchored mean); DR-0044 (`SPYIV30`); DR-0045 (HIST-1); DR-0048 (v4, ADJ-1).
 - **Stage:** R2, Part 1 (R2.3). This DR comes before any path code depends on it, as P2 requires.
@@ -18,6 +18,7 @@
 3. **IV along the path:** each expiration's decision-board smile × √ρ, held fixed.
 4. **The fallback:** the sector's fit, otherwise the name is excluded.
 5. **The +5% bug signal:** tested on MKT-1's anchored mean (a quote-error test), never on MKTV-1's own mean.
+6. **Shrinkage:** w = n_eff ÷ (n_eff + 12), fixed before any fit is seen.
 
 ## Decision
 
@@ -31,7 +32,7 @@
   - Sessions excluded from total returns (a missing close, an unsupported action) make that row's window incomplete, and the row is dropped and counted.
 - **The window:** rows whose **response date** lies in the 3 years before the fit cutoff (rolling).
 - **The fit:** ordinary least squares on daily, overlapping rows. The uncertainty is reported with Newey-West at lag 21, and the effective sample size as rows ÷ 21.
-- **Shrinkage toward the sector (proposed):**
+- **Shrinkage toward the sector (Josh, 2026-11-24):**
   - The sector's (a, b) is fitted the same way, pooled over the sector's names with at least 3 years of history (DR-0044).
   - The name's (a, b) = w × name + (1 − w) × sector, with w = n_eff ÷ (n_eff + 12), where n_eff is the name's effective sample size (rows ÷ 21). A name with 3 full years (about 36 effective windows) gets w ≈ 0.75.
   - Sector = the name's sector SPDR, under the same name-to-sector mapping the factor model uses (P3; fixed in the factor-model DR). SPY and the sector SPDRs use their own fit, unshrunk.
