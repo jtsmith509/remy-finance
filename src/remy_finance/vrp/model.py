@@ -27,25 +27,31 @@ from remy_finance.core.types import UtcDatetime
 from remy_finance.data.timeutil import et_date, previous_session
 from remy_finance.fileio import publish_file
 from remy_finance.history import HistoryView, HistSeries, HistStore
+from remy_finance.history.build import SECTOR_SPDRS
 from remy_finance.vrp.estimator import (
     CLIP,
+    MIN_EFFECTIVE,
     SHRINK_K,
     SPY,
     WINDOW,
     OlsFit,
+    Row,
     RowSet,
     build_rows,
     clip_ratio,
     fit_ols,
+    last_public_session,
     pooled_rows,
     shrink_weight,
     spy_series,
+    window_start,
 )
 
 PLACES = 10
 METHOD = (
     f"VRP-1 (DR-0049): ratio = RV/IV^2 over {WINDOW} sessions, OLS on SPYIV30, Newey-West lag "
-    f"{WINDOW}, shrink w = n_eff/(n_eff+{SHRINK_K:g}), clip {CLIP}"
+    f"{WINDOW}, min {MIN_EFFECTIVE:g} effective windows, shrink w = n_eff/(n_eff+{SHRINK_K:g}), "
+    f"clip {CLIP}"
 )
 
 
@@ -56,10 +62,10 @@ def _d(x: float) -> Decimal:
 class VrpCoefficients(Record):
     a: Decimal
     b: Decimal
-    se_a: Decimal
-    se_b: Decimal
+    se_a: Decimal | None
+    se_b: Decimal | None  # None for a shrunk line (the SEs belong to the fits it mixes)
     n_rows: int = Field(ge=0)
-    clipped_share: Decimal
+    clipped_share: Decimal  # share of the rows whose ratio on THIS line is outside CLIP
 
     @classmethod
     def of(cls, fit: OlsFit) -> VrpCoefficients:
@@ -71,6 +77,15 @@ class VrpCoefficients(Record):
             n_rows=fit.n_rows,
             clipped_share=_d(fit.clipped_share),
         )
+
+    @classmethod
+    def shrunk(cls, a: float, b: float, rows: Sequence[Row]) -> VrpCoefficients:
+        """The applied line of a shrunk name, with its own clipping share on the name's
+        rows; no SEs."""
+        fitted = [a + b * r.x for r in rows]
+        share = sum(1 for f in fitted if f < CLIP[0] or f > CLIP[1]) / max(len(fitted), 1)
+        return cls(a=_d(a), b=_d(b), se_a=None, se_b=None, n_rows=len(rows),
+                   clipped_share=_d(share))  # fmt: skip
 
 
 class VrpName(Record):
@@ -93,19 +108,44 @@ class VrpRefit(Record):
     cutoff: UtcDatetime
     names: tuple[VrpName, ...]
     sectors: tuple[tuple[str, VrpCoefficients | None], ...]
-    inputs_hash: str  # sha256 of every admitted row, by symbol
+    # The names pooled into each sector's fit (DR-0044's 3 years at the cutoff), and the
+    # mapped names left out for shorter history.
+    sector_members: tuple[tuple[str, tuple[str, ...]], ...] = ()
+    short_history: tuple[str, ...] = ()
+    clipped_share: Decimal = Decimal(0)  # over every name's rows, on its applied line
+    # sha256 of everything that sets the output: the method and its constants, the
+    # cutoff, the symbols, the sector mapping and pools, and every admitted row.
+    inputs_hash: str
     created_at: UtcDatetime
 
     def name(self, symbol: str) -> VrpName | None:
         return next((n for n in self.names if n.symbol == symbol), None)
 
 
-def _rows_hash(row_sets: Mapping[str, RowSet]) -> str:
+def _inputs_hash(
+    cutoff: datetime,
+    row_sets: Mapping[str, RowSet],
+    sectors: Mapping[str, str],
+    members: Mapping[str, Sequence[str]],
+) -> str:
     h = hashlib.sha256()
+    h.update(f"{METHOD}\n{cutoff.isoformat()}\n".encode())
+    h.update(("symbols " + ",".join(sorted(row_sets)) + "\n").encode())
+    h.update(
+        ("sectors " + ",".join(f"{n}:{s}" for n, s in sorted(sectors.items())) + "\n").encode()
+    )
+    for sec in sorted(members):
+        h.update(f"pool {sec}: {','.join(sorted(members[sec]))}\n".encode())
     for sym in sorted(row_sets):
         for r in row_sets[sym].rows:
             h.update(f"{sym}|{r.session}|{r.response}|{r.ratio!r}|{r.x!r}\n".encode())
     return h.hexdigest()
+
+
+def has_three_years(view: HistoryView, symbol: str) -> bool:
+    """DR-0044 at the cutoff: the name's first stored close is at least 3 years old."""
+    closes = view.series(HistSeries.CLOSE, symbol, None, last_public_session(view.as_of))
+    return bool(closes) and closes[0].session <= window_start(view.as_of)
 
 
 def fit_refit(
@@ -114,36 +154,49 @@ def fit_refit(
     sectors: Mapping[str, str],
     cutoff: datetime,
     created_at: datetime,
-    history_ok: Mapping[str, bool] | None = None,
 ) -> VrpRefit:
     """Fit every symbol as of ``cutoff``. ``sectors`` maps a name to its sector SPDR (the
-    factor model's mapping); a symbol not in it (SPY, the SPDRs, or an unmapped name) uses
-    its own fit unshrunk. ``history_ok`` says which names have DR-0044's 3 years and may
-    join a sector's pooled fit (default: all)."""
+    factor model's mapping). SPY and the sector SPDRs use their own fit, unshrunk; a mapped
+    name is shrunk toward its sector's pooled fit, pooled only over the sector's names with
+    DR-0044's 3 years at the cutoff; any other name has no ratio."""
     view = HistoryView(store, cutoff)
     spy = spy_series(view)
     row_sets = {s: build_rows(view, s, spy) for s in sorted(set(symbols))}
     own = {s: fit_ols(rs.rows) for s, rs in row_sets.items()}
-    sector_fits: dict[str, OlsFit | None] = {}
-    for sec in sorted(set(sectors.values())):
-        members = [
-            row_sets[n]
-            for n, s in sectors.items()
-            if s == sec and n in row_sets and (history_ok is None or history_ok.get(n, False))
-        ]
-        sector_fits[sec] = fit_ols(pooled_rows(members)) if members else None
+    members: dict[str, list[str]] = {}
+    short: list[str] = []
+    for name, sec in sorted(sectors.items()):
+        if name not in row_sets:
+            continue
+        if has_three_years(view, name):
+            members.setdefault(sec, []).append(name)
+        else:
+            short.append(name)
+    sector_fits: dict[str, OlsFit | None] = {
+        sec: fit_ols(pooled_rows(row_sets[n] for n in members.get(sec, [])))
+        for sec in sorted(set(sectors.values()))
+    }
     names = [
         _name_entry(sym, rs, own[sym], sectors.get(sym), sector_fits)
         for sym, rs in row_sets.items()
     ]
+    applied = [(n.used, row_sets[n.symbol].rows) for n in names if n.used is not None]
+    total = sum(len(rows) for _, rows in applied)
+    clipped = sum(float(u.clipped_share) * len(rows) for u, rows in applied)
     return VrpRefit(
         method=METHOD,
         cutoff=cutoff,
         names=tuple(names),
         sectors=tuple((s, VrpCoefficients.of(f) if f else None) for s, f in sector_fits.items()),
-        inputs_hash=_rows_hash(row_sets),
+        sector_members=tuple((s, tuple(m)) for s, m in sorted(members.items())),
+        short_history=tuple(short),
+        clipped_share=_d(clipped / total if total else 0.0),
+        inputs_hash=_inputs_hash(cutoff, row_sets, sectors, members),
         created_at=created_at,
     )
+
+
+OWN_FIT_SYMBOLS = frozenset({SPY, *SECTOR_SPDRS})
 
 
 def _name_entry(
@@ -157,23 +210,22 @@ def _name_entry(
     own_c = VrpCoefficients.of(fit) if fit is not None else None
     no_own = "" if fit is not None else f"too few mature rows ({len(rs.rows)}) or a failed fit"
     base = {"symbol": sym, "sector": sector, "own": own_c, "dropped": dropped}
-    if sector is None:  # SPY, a sector SPDR or an unmapped name: its own fit, unshrunk
+    if sym in OWN_FIT_SYMBOLS:  # SPY and the sector SPDRs: their own fit, unshrunk
         source = "own" if own_c is not None else "none"
         return VrpName(**base, weight=None, used=own_c, source=source, reason=no_own)
+    if sector is None:
+        reason = "not in the sector mapping" + (f"; {no_own}" if no_own else "")
+        return VrpName(**base, weight=None, used=None, source="none", reason=reason)
     sfit = sector_fits.get(sector)
     if fit is not None and sfit is not None:
         w = shrink_weight(fit.n_eff)
-        shrunk = VrpCoefficients.of(fit).model_copy(
-            update={
-                "a": _d(w * fit.a + (1 - w) * sfit.a),
-                "b": _d(w * fit.b + (1 - w) * sfit.b),
-            }
+        line = VrpCoefficients.shrunk(
+            w * fit.a + (1 - w) * sfit.a, w * fit.b + (1 - w) * sfit.b, rs.rows
         )
-        return VrpName(**base, weight=_d(w), used=shrunk, source="shrunk")
-    if fit is not None:  # no sector fit to shrink toward: the name's own
-        return VrpName(
-            **base, weight=None, used=own_c, source="own", reason=f"no {sector} sector fit"
-        )
+        return VrpName(**base, weight=_d(w), used=line, source="shrunk")
+    if fit is not None:  # no sector fit to shrink toward: the name's own, flagged
+        reason = f"no {sector} sector fit: own fit unshrunk"
+        return VrpName(**base, weight=None, used=own_c, source="own", reason=reason)
     if sfit is not None:
         used = VrpCoefficients.of(sfit)
         return VrpName(**base, weight=None, used=used, source="sector", reason=no_own)

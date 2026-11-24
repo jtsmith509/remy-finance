@@ -1211,7 +1211,7 @@ def vrp_diagnose(
                        f"{n.reason}; {drops}")  # fmt: skip
             continue
         typer.echo(
-            f"{n.symbol:6} {float(c.a):8.3f} {float(c.se_a):7.3f} {float(c.b):8.3f} "
-            f"{float(c.se_b):7.3f} {c.n_rows:5d} {c.n_rows / 21:6.1f} "
+            f"{n.symbol:6} {float(c.a):8.3f} {float(c.se_a or 0):7.3f} {float(c.b):8.3f} "
+            f"{float(c.se_b or 0):7.3f} {c.n_rows:5d} {c.n_rows / 21:6.1f} "
             f"{100 * float(c.clipped_share):5.1f}%  {drops}"
         )

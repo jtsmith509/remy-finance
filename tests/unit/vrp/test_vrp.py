@@ -19,6 +19,7 @@ from remy_finance.vrp.estimator import (
     fit_ols,
     last_public_session,
     shrink_weight,
+    window_start,
 )
 from remy_finance.vrp.model import VrpStore, board_ratio, fit_refit
 from tests.unit.history.helpers import obs
@@ -179,7 +180,7 @@ def test_shrinkage_fallbacks_and_the_board_ratio(tmp_path: Path) -> None:
 
 def test_the_ratio_is_clipped_and_needs_a_public_spyiv30(tmp_path: Path) -> None:
     store = make_store(tmp_path / "h.sqlite", names={"HOT": (3.0, 5.0)})
-    refit = fit_refit(store, ["HOT"], {}, CUTOFF, datetime(2026, 11, 21, tzinfo=UTC))
+    refit = fit_refit(store, ["HOT"], {"HOT": "XLK"}, CUTOFF, datetime(2026, 11, 21, tzinfo=UTC))
     hot = refit.name("HOT")
     assert hot and hot.own and float(hot.own.clipped_share) > 0.5
     t = et_at(date(2026, 11, 23), 10)
@@ -211,3 +212,163 @@ def test_cli_diagnose_prints_fits_and_writes_nothing(
     }
     assert set(lines) == {"AAA", "SPY", "ZZZ"} and "too few mature rows" in lines["ZZZ"]
     assert not (tmp_path / "vrp").exists()
+
+
+# ------------------------------------------------------------ review regressions (VRP)
+
+T0 = datetime(2026, 11, 21, tzinfo=UTC)
+
+
+def _copy(src: HistStore, path: Path, syms: tuple[str, ...], keep=lambda s, series, o: True):  # type: ignore[no-untyped-def]
+    g = HistStore(path)
+    g.add_observations(
+        o for s in syms for series in (HistSeries.CLOSE, HistSeries.ATMIV30)
+        for o in src.observations(series, s) if keep(s, series, o)
+    )  # fmt: skip
+    return g
+
+
+def test_row_is_252_mean_square_of_the_21_returns_after_s(tmp_path: Path) -> None:
+    """TESTS-2: window = sessions s+1..s+21, response = s+21, divided by 21."""
+    store = make_store(tmp_path / "h.sqlite")
+    view = HistoryView(store, CUTOFF)
+    rows = build_rows(view, "AAA").rows
+    days = sessions_between(date(2022, 11, 1), END)
+    rets, _ = view.total_returns("AAA", days[0], END)
+    r = {x.session: x.log_return for x in rets}
+    for row in rows[::97]:
+        i = days.index(row.session)
+        assert row.response == days[i + WINDOW]
+        win = days[i + 1 : i + WINDOW + 1]
+        assert row.ratio == pytest.approx(
+            252 * sum(r[d] ** 2 for d in win) / WINDOW / 0.09, rel=1e-12
+        )
+
+
+def test_window_is_on_response_dates_three_years_inclusive(tmp_path: Path) -> None:
+    rows = build_rows(HistoryView(make_store(tmp_path / "h.sqlite"), CUTOFF), "AAA").rows
+    assert window_start(CUTOFF) == date(2023, 11, 20)
+    assert min(r.response for r in rows) == date(2023, 11, 20)
+    assert min(r.session for r in rows) < date(2023, 11, 20)
+
+
+def _nw_reference(rows: list[Row], lag: int) -> tuple[float, float]:
+    x = np.array([r.x for r in rows])
+    y = np.array([r.ratio for r in rows])
+    X = np.column_stack([np.ones_like(x), x])
+    inv = np.linalg.inv(X.T @ X)
+    u = y - X @ (inv @ X.T @ y)
+    dates = sorted({r.session for r in rows})
+    g = np.array([sum(X[k] * u[k] for k, r in enumerate(rows) if r.session == d) for d in dates])
+    s = sum(np.outer(g[t], g[t]) for t in range(len(g)))
+    for j in range(1, lag + 1):
+        w = 1 - j / (lag + 1)
+        for t in range(j, len(g)):
+            s = s + w * (np.outer(g[t], g[t - j]) + np.outer(g[t - j], g[t]))
+    cov = inv @ s @ inv
+    return math.sqrt(cov[0, 0]), math.sqrt(cov[1, 1])
+
+
+def test_newey_west_matches_a_reference_and_sums_per_date() -> None:
+    """TESTS-1: Bartlett weights, lag 21, scores summed per date (pooled sectors)."""
+    rng = np.random.default_rng(3)
+    d0 = date(2024, 1, 1)
+    rows = []
+    for i in range(400):
+        x = 0.2 + 0.05 * math.sin(i / 30)
+        e = 0.0
+        for _ in range(2):
+            e = 0.8 * e + rng.normal(0, 0.1)
+            rows.append(Row(d0 + timedelta(days=i), d0, 0.5 + 2 * x + e + 0.3 * math.sin(i / 7), x))
+    fit = fit_ols(rows)
+    assert fit is not None
+    se_a, se_b = _nw_reference(rows, WINDOW)
+    assert fit.se_a == pytest.approx(se_a, rel=1e-9) and fit.se_b == pytest.approx(se_b, rel=1e-9)
+
+
+def test_the_sector_pools_only_names_with_three_years(tmp_path: Path) -> None:
+    """SPEC-3: CCC listed in 2024: left out of XLK's pool, recorded, and hashed."""
+    names = {"AAA": (0.2, 3.0), "BBB": (0.6, 1.0), "CCC": (1.2, -1.0)}
+    store = make_store(tmp_path / "h.sqlite", names=names)
+    g = _copy(store, tmp_path / "g.sqlite", (*names, "SPY"),
+              lambda s, series, o: not (s == "CCC" and o.session < date(2024, 6, 3)))  # fmt: skip
+    sectors = {n: "XLK" for n in names}
+    refit = fit_refit(g, list(names), sectors, CUTOFF, T0)
+    assert dict(refit.sector_members)["XLK"] == ("AAA", "BBB")
+    assert refit.short_history == ("CCC",)
+    only_ab = fit_refit(g, ["AAA", "BBB"], {"AAA": "XLK", "BBB": "XLK"}, CUTOFF, T0)
+    assert dict(refit.sectors)["XLK"] == dict(only_ab.sectors)["XLK"]
+    ccc = refit.name("CCC")
+    assert ccc and ccc.source == "shrunk"  # its own rows still fit; only the pool excludes it
+
+
+def test_shrunk_lines_shrink_b_and_carry_their_own_clipping(tmp_path: Path) -> None:
+    """TESTS-7, STATS-1: both coefficients; the applied line's clip share; no SEs."""
+    names = {"AAA": (0.6, 3.0), "BBB": (5.0, 0.0)}
+    store = make_store(tmp_path / "h.sqlite", names=names)
+    refit = fit_refit(store, list(names), {n: "XLK" for n in names}, CUTOFF, T0)
+    a, sec = refit.name("AAA"), dict(refit.sectors)["XLK"]
+    assert a and a.own and a.used and a.weight is not None and sec
+    w = float(a.weight)
+    assert float(a.used.b) == pytest.approx(w * float(a.own.b) + (1 - w) * float(sec.b), abs=1e-8)
+    assert a.used.se_a is None and a.used.se_b is None
+    rows = build_rows(HistoryView(store, CUTOFF), "AAA").rows
+    line = [float(a.used.a) + float(a.used.b) * r.x for r in rows]
+    share = sum(1 for v in line if v < 0.3 or v > 1.5) / len(rows)
+    assert float(a.used.clipped_share) == pytest.approx(share, abs=1e-9)
+    assert float(a.used.clipped_share) != float(a.own.clipped_share)
+    assert 0 < float(refit.clipped_share) <= 1
+
+
+def test_unmapped_names_get_no_ratio_and_spdrs_their_own(tmp_path: Path) -> None:
+    """SPEC-4."""
+    store = make_store(tmp_path / "h.sqlite", names={"AAA": (0.2, 3.0), "XLK": (0.3, 2.0)})
+    refit = fit_refit(store, ["AAA", "XLK", "SPY"], {}, CUTOFF, T0)
+    aaa, xlk, spy = refit.name("AAA"), refit.name("XLK"), refit.name("SPY")
+    assert aaa and aaa.used is None and aaa.own and "not in the sector mapping" in aaa.reason
+    assert xlk and xlk.source == "own" and spy and spy.source == "own"
+
+
+def test_the_ratio_is_clipped_below_at_0_3(tmp_path: Path) -> None:
+    store = make_store(tmp_path / "h.sqlite", names={"COLD": (0.02, 0.0)})
+    refit = fit_refit(store, ["COLD"], {"COLD": "XLK"}, CUTOFF, T0)
+    assert board_ratio(refit, store, "COLD", et_at(date(2026, 11, 23), 10))[0] == 0.3
+
+
+def test_a_board_uses_the_latest_refit_at_or_before_its_decision(tmp_path: Path) -> None:
+    store = make_store(tmp_path / "h.sqlite")
+    vs = VrpStore(tmp_path / "vrp")
+    c1 = et_at(date(2026, 10, 30), 17, 30)
+    r1, r2 = fit_refit(store, ["AAA"], {}, c1, T0), fit_refit(store, ["AAA"], {}, CUTOFF, T0)
+    vs.write(r2)
+    vs.write(r1)
+    assert vs.for_decision(et_at(date(2026, 11, 23), 10)) == r2
+    assert vs.for_decision(CUTOFF) == r2
+    assert vs.for_decision(CUTOFF - timedelta(seconds=1)) == r1
+
+
+def test_missing_spyiv30_drops_the_row(tmp_path: Path) -> None:
+    store = make_store(tmp_path / "h.sqlite")
+    gone = set(sessions_between(date(2026, 3, 2), date(2026, 3, 13)))
+    g = _copy(store, tmp_path / "g.sqlite", ("AAA", "SPY"),
+              lambda s, series, o: not (s == "SPY" and series is HistSeries.ATMIV30
+                                        and o.session in gone))  # fmt: skip
+    rs = build_rows(HistoryView(g, CUTOFF), "AAA")
+    assert rs.dropped.get("NO_SPYIV30") == len(gone)
+    assert not any(r.session in gone for r in rs.rows)
+
+
+def test_the_inputs_hash_covers_rows_mapping_and_pools(tmp_path: Path) -> None:
+    """TESTS-9, PIT-01: reproducible, and sensitive to every input that sets the output."""
+    names = {"AAA": (0.2, 3.0), "BBB": (0.6, 1.0)}
+    store = make_store(tmp_path / "h.sqlite", names=names)
+    h = fit_refit(store, ["AAA", "BBB"], {"AAA": "XLK", "BBB": "XLK"}, CUTOFF, T0).inputs_hash
+    assert (
+        h == fit_refit(store, ["AAA", "BBB"], {"AAA": "XLK", "BBB": "XLK"}, CUTOFF, T0).inputs_hash
+    )
+    assert h != fit_refit(store, ["AAA", "BBB"], {"AAA": "XLK"}, CUTOFF, T0).inputs_hash
+    assert h != fit_refit(store, ["AAA", "BBB"], {}, CUTOFF, T0).inputs_hash
+    other = make_store(tmp_path / "o.sqlite", names=names, seed=8)
+    assert (
+        h != fit_refit(other, ["AAA", "BBB"], {"AAA": "XLK", "BBB": "XLK"}, CUTOFF, T0).inputs_hash
+    )
