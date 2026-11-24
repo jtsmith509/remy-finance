@@ -68,6 +68,8 @@ class OlsFit:
     se_b: float
     n_rows: int
     clipped_share: float  # share of rows whose fitted ratio falls outside CLIP
+    median_ratio: float = 0.0  # diagnostics of the raw ratios (outliers vs units)
+    share_above_1: float = 0.0
 
     @property
     def n_eff(self) -> float:
@@ -156,6 +158,8 @@ def fit_ols(rows: Sequence[Row]) -> OlsFit | None:
         math.sqrt(max(float(cov[1, 1]), 0.0)),
         len(rows),
         clipped,
+        float(np.median(y)),
+        float(np.mean(y > 1.0)),
     )
 
 

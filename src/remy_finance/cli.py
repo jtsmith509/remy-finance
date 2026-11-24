@@ -1101,12 +1101,33 @@ def hist_status() -> None:
         raise typer.Exit(1)
     store = HistStore(path)
     typer.echo(f"HIST-1 at {path}: {store.counts()}")
-    reasons = Counter((m[0], m[3]) for m in store.missing())
-    for (series, reason), n in sorted(reasons.items()):
+    resolved = store.missing_resolved()
+    still = Counter((m[0], m[3]) for m in store.missing() if m[:3] not in resolved)
+    for (series, reason), n in sorted(still.items()):
         typer.echo(f"  missing {series} {reason}: {n}")
-    unusable = Counter((u[0], u[3]) for u in store.unusable())
-    for (kind, reason), n in sorted(unusable.items()):
+    done = Counter((m[0], m[3]) for m in store.missing() if m[:3] in resolved)
+    for (series, reason), n in sorted(done.items()):
+        typer.echo(f"  resolved since (an amended method): {series} {reason}: {n}")
+    undeclared: dict[str, set[date]] = {}
+    excluded: Counter[tuple[str, str]] = Counter()
+    superseded = 0
+    for kind, sym, ex, reason in store.unusable():
+        if reason == "NO_DECLARATION_DATE":
+            if sym not in undeclared:
+                undeclared[sym] = {
+                    d.ex_date for d in store.dividends(sym) if d.declaration_date is None
+                }
+            if ex in undeclared[sym]:
+                superseded += 1
+                continue
+        excluded[(kind, reason)] += 1
+    for (kind, reason), n in sorted(excluded.items()):
         typer.echo(f"  unusable {kind} {reason}: {n} (those sessions are excluded from returns)")
+    if superseded:
+        typer.echo(
+            f"  superseded: {superseded} undeclared dividends now stored, public at the "
+            "ex-date open (DR-0045 amendment); those sessions count the cash"
+        )
     for c in store.conflicts()[:20]:
         typer.echo(f"  conflict {c.series} {c.symbol} {c.session}: kept {c.kept_hash[:12]}")
 
@@ -1202,7 +1223,7 @@ def vrp_diagnose(
     refit = fit_refit(HistStore(hist_path(_data_dir())), names, {}, at, datetime.now(UTC))
     typer.echo(f"{refit.method}\ncutoff {at.isoformat()}; inputs {refit.inputs_hash[:16]}")
     typer.echo(f"{'name':6} {'a':>8} {'se':>7} {'b':>8} {'se':>7} {'rows':>5} {'n_eff':>6} "
-               f"{'clip%':>6}  dropped")  # fmt: skip
+               f"{'clip%':>6} {'median':>7} {'>1%':>5}  dropped")  # fmt: skip
     for n in refit.names:
         c = n.own
         drops = ", ".join(f"{k} {v}" for k, v in n.dropped)
@@ -1213,5 +1234,6 @@ def vrp_diagnose(
         typer.echo(
             f"{n.symbol:6} {float(c.a):8.3f} {float(c.se_a or 0):7.3f} {float(c.b):8.3f} "
             f"{float(c.se_b or 0):7.3f} {c.n_rows:5d} {c.n_rows / 21:6.1f} "
-            f"{100 * float(c.clipped_share):5.1f}%  {drops}"
+            f"{100 * float(c.clipped_share):5.1f}% {float(c.median_ratio or 0):7.3f} "
+            f"{100 * float(c.share_above_1 or 0):4.0f}%  {drops}"
         )

@@ -351,6 +351,16 @@ class HistStore:
             rows = c.execute(q + " ORDER BY series, symbol, session", args).fetchall()
         return [(r[0], r[1], date.fromisoformat(r[2]), r[3]) for r in rows]
 
+    def missing_resolved(self) -> set[tuple[str, str, date]]:
+        """Missing keys that have since been derived (an amended method), as (series,
+        symbol, session). The missing rows stay, append-only, as history."""
+        with self._conn() as c:
+            rows = c.execute(
+                "SELECT m.series, m.symbol, m.session FROM missing m JOIN obs o "
+                "ON o.series = m.series AND o.symbol = m.symbol AND o.session = m.session"
+            ).fetchall()
+        return {(r[0], r[1], date.fromisoformat(r[2])) for r in rows}
+
     def unusable(self, symbol: str | None = None) -> list[tuple[str, str, date, str]]:
         q = "SELECT kind, symbol, key_date, reason FROM unusable"
         args: Sequence[str] = ()

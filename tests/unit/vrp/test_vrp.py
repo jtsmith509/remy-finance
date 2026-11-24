@@ -211,6 +211,7 @@ def test_cli_diagnose_prints_fits_and_writes_nothing(
         line.split()[0]: line for line in r.output.splitlines() if line[:3] in ("AAA", "SPY", "ZZZ")
     }
     assert set(lines) == {"AAA", "SPY", "ZZZ"} and "too few mature rows" in lines["ZZZ"]
+    assert "median" in r.output and ">1%" in r.output
     assert not (tmp_path / "vrp").exists()
 
 
@@ -372,3 +373,16 @@ def test_the_inputs_hash_covers_rows_mapping_and_pools(tmp_path: Path) -> None:
     assert (
         h != fit_refit(other, ["AAA", "BBB"], {"AAA": "XLK", "BBB": "XLK"}, CUTOFF, T0).inputs_hash
     )
+
+
+def test_own_fits_carry_the_raw_ratio_median_and_share_above_1(tmp_path: Path) -> None:
+    store = make_store(tmp_path / "h.sqlite")
+    rows = build_rows(HistoryView(store, CUTOFF), "AAA").rows
+    fit = fit_ols(rows)
+    assert fit is not None
+    ratios = sorted(r.ratio for r in rows)
+    assert fit.median_ratio == pytest.approx(float(np.median(ratios)))
+    assert fit.share_above_1 == pytest.approx(sum(x > 1 for x in ratios) / len(ratios))
+    entry = fit_refit(store, ["AAA"], {"AAA": "XLK"}, CUTOFF, T0).name("AAA")
+    assert entry and entry.own and entry.own.median_ratio is not None
+    assert entry.used and entry.used.median_ratio is None  # a shrunk line has none

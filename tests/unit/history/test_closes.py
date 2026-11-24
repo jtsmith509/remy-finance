@@ -143,3 +143,33 @@ def test_a_lazily_opened_store_fails_on_first_read_not_on_construction(tmp_path:
     src = StoreFirstCloses(lambda: HistStore(bad), Vendor())
     with pytest.raises(HistError):
         src.official_close("AAA", D)
+
+
+def test_status_separates_resolved_missing_and_superseded_exclusions(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`hist status` after the DR-0045 amendments: resolved IVs and superseded exclusions
+    are reported apart from what is still missing or excluded."""
+    from typer.testing import CliRunner
+
+    from remy_finance import cli
+    from remy_finance.core import DividendEvent
+    from remy_finance.history import hist_path
+
+    monkeypatch.setenv("REMY_DATA_DIR", str(tmp_path))
+    store = HistStore(hist_path(tmp_path))
+    d1, d2 = date(2026, 11, 2), date(2026, 11, 3)
+    store.add_missing(HistSeries.ATMIV30, "AAA", d1, "NO_BRACKET_30D")
+    store.add_missing(HistSeries.ATMIV30, "AAA", d2, "NO_BRACKET_30D")
+    store.add_observations([obs(HistSeries.ATMIV30, "AAA", d1, "0.3")])  # re-derived later
+    store.add_unusable([("DIVIDEND", "AAA", d1, "NO_DECLARATION_DATE"),
+                        ("DIVIDEND", "AAA", d2, "NO_DECLARATION_DATE")])  # fmt: skip
+    t = et_at(d1, 9, 30)
+    store.add_events([DividendEvent(symbol="AAA", ex_date=d1, amount=Decimal("1"),
+                                    event_time=t, public_time=t, source="m")])  # fmt: skip
+    r = CliRunner().invoke(cli.app, ["hist", "status"])
+    assert r.exit_code == 0, r.output
+    assert "missing ATMIV30 NO_BRACKET_30D: 1" in r.output
+    assert "resolved since (an amended method): ATMIV30 NO_BRACKET_30D: 1" in r.output
+    assert "unusable DIVIDEND NO_DECLARATION_DATE: 1 " in r.output
+    assert "superseded: 1 undeclared dividends" in r.output

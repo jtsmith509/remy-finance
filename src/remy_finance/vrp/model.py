@@ -66,6 +66,8 @@ class VrpCoefficients(Record):
     se_b: Decimal | None  # None for a shrunk line (the SEs belong to the fits it mixes)
     n_rows: int = Field(ge=0)
     clipped_share: Decimal  # share of the rows whose ratio on THIS line is outside CLIP
+    median_ratio: Decimal | None = None  # the raw ratios' median (own fits only)
+    share_above_1: Decimal | None = None  # share of raw ratios above 1 (own fits only)
 
     @classmethod
     def of(cls, fit: OlsFit) -> VrpCoefficients:
@@ -76,6 +78,8 @@ class VrpCoefficients(Record):
             se_b=_d(fit.se_b),
             n_rows=fit.n_rows,
             clipped_share=_d(fit.clipped_share),
+            median_ratio=_d(fit.median_ratio),
+            share_above_1=_d(fit.share_above_1),
         )
 
     @classmethod
