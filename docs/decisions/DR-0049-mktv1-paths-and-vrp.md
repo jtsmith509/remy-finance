@@ -83,6 +83,21 @@ These fill gaps DR-0049 left open. They reopen nothing it decided. See `docs/rev
    - A shrunk line carries its own clipping share and no standard errors, and each refit reports one overall clipping share.
    - The inputs hash covers the method and its constants, the cutoff, the symbols, the mapping, the pools and every admitted row.
 
+## First real fits, and the estimator kept (Josh, 2026-11-24)
+- **The fits:** `remy vrp diagnose --cutoff 2026-11-21`, on HIST-1 after the second build: 81 symbols, mostly 753 rows each (35.9 effective windows).
+- **Median raw ratios look like a normal volatility risk premium:**
+  - SPY 0.73, DIA 0.79, QQQ 0.83;
+  - the sector SPDRs and HYG 0.40–0.91;
+  - most single stocks 0.70–0.95.
+  - Only AMD, ARM, AVGO, GDX, GLD, INTC, MSTR, MU, ORCL and SMCI are above 1, after genuine multi-month realized surges.
+  - The units are therefore right.
+- **The least-squares means run about 0.3 above the medians.** At SPYIV30 ≈ 0.15, SPY's fitted ratio is about 1.07 and AAPL's about 1.15. A few extreme windows dominate them: April 2025, UNH, ORCL and INTC. Sampling noise alone would put the mean only about 3% above the median.
+- **The heaviest clipping:** INTC 57%, ORCL 48%, UNH 38% (b = 14.9 ± 10.7), ARM 36% and AVGO 16%. The regime slope b is mostly within about one standard error of 0 before shrinkage.
+- **Josh's decision: keep OLS on the ratio.**
+  - It estimates the **mean** realized variance, the honest target for scaling a variance. The [0.3, 1.5] clip bounds it.
+  - A median-type fit (the log ratio) would set MKTV-1's variance systematically too low, which would weaken the benchmark in P3.
+  - These diagnostics go into the Stop Point D memo.
+
 ## Consequences
 - **A pure market benchmark with a VRP view.** MKTV-1 differs from MKT-1 only by ρ and by valuing EXIT-1 on paths. Its paths reproduce its terminal density exactly, and at ρ = 1 they reproduce MKT-1's distribution and the board's mids.
 - **No IV dynamics.** MKTV-1's early exits don't benefit from IV moves. That's deliberate: IV dynamics are FAC-1's (P6). The P3 contrast then measures the factor model against the market's own view adjusted for the risk premium.
