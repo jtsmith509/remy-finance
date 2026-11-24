@@ -1,6 +1,6 @@
 # DR-0049: MKTV-1, its paths and the VRP estimate
 
-- **Status:** proposed (2026-11-24). Josh answered the six design questions (below). The rest awaits his confirmation.
+- **Status:** accepted (Josh, 2026-11-24), with his six design answers (below).
 - **Date:** 2026-11-24
 - **Source:** R2 brief P2 (MKTV-1, B03), P6 (sticky moneyness), P7 (exit fills on paths), P8 (paths and time), P9 (VRP estimate), B02 (VRP labels), B05 (forwards on paths), B06 (cadence); EVAL-2 §1, §6 and §7.2; DR-0037 (MKT-1's mid-anchored mean); DR-0044 (`SPYIV30`); DR-0045 (HIST-1); DR-0048 (v4, ADJ-1).
 - **Stage:** R2, Part 1 (R2.3). This DR comes before any path code depends on it, as P2 requires.
