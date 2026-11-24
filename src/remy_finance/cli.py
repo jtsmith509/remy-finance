@@ -37,6 +37,8 @@ replay_app = typer.Typer(help="Replay the R1 pipeline over history (R1.8).", no_
 app.add_typer(replay_app, name="replay")
 hist_app = typer.Typer(help="HIST-1 history store (R2, DR-0045).", no_args_is_help=True)
 app.add_typer(hist_app, name="hist")
+vrp_app = typer.Typer(help="The VRP estimate for MKTV-1 (R2, DR-0049).", no_args_is_help=True)
+app.add_typer(vrp_app, name="vrp")
 
 REPO_DIR = Path(__file__).resolve().parents[2]
 
@@ -1178,3 +1180,38 @@ def hist_coverage(
         typer.echo(f"  filled {store.stats.filled} from ThetaData; still missing {len(missing)}")
     for sym, d in missing[:30]:
         typer.echo(f"  missing {sym} {d}")
+
+
+@vrp_app.command("diagnose")
+def vrp_diagnose(
+    cutoff: Annotated[str, typer.Option(help="Fit cutoff session, YYYY-MM-DD (as of 17:30 ET)")],
+    symbols: Annotated[str, typer.Option(help="Comma-separated; default HIST-1's base names")] = "",
+) -> None:
+    """Fit every name's VRP regression as of CUTOFF and print the diagnostics (DR-0049):
+    a, b with Newey-West errors, rows, effective windows, clipping share and dropped rows.
+    Read-only: no refit is stored (stored refits need the factor model's sector mapping)."""
+    from datetime import UTC
+
+    from remy_finance.data.timeutil import et_at
+    from remy_finance.history import HistStore, hist_path
+    from remy_finance.history.build import base_symbols
+    from remy_finance.vrp.model import fit_refit
+
+    names = [s.strip().upper() for s in symbols.split(",") if s.strip()] or base_symbols()
+    at = et_at(date.fromisoformat(cutoff), 17, 30)
+    refit = fit_refit(HistStore(hist_path(_data_dir())), names, {}, at, datetime.now(UTC))
+    typer.echo(f"{refit.method}\ncutoff {at.isoformat()}; inputs {refit.inputs_hash[:16]}")
+    typer.echo(f"{'name':6} {'a':>8} {'se':>7} {'b':>8} {'se':>7} {'rows':>5} {'n_eff':>6} "
+               f"{'clip%':>6}  dropped")  # fmt: skip
+    for n in refit.names:
+        c = n.own
+        drops = ", ".join(f"{k} {v}" for k, v in n.dropped)
+        if c is None:
+            typer.echo(f"{n.symbol:6} {'-':>8} {'':>7} {'-':>8} {'':>7} {'':>5} {'':>6} {'':>6}  "
+                       f"{n.reason}; {drops}")  # fmt: skip
+            continue
+        typer.echo(
+            f"{n.symbol:6} {float(c.a):8.3f} {float(c.se_a):7.3f} {float(c.b):8.3f} "
+            f"{float(c.se_b):7.3f} {c.n_rows:5d} {c.n_rows / 21:6.1f} "
+            f"{100 * float(c.clipped_share):5.1f}%  {drops}"
+        )
