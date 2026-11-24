@@ -24,8 +24,8 @@
 - **SPEC-5:** the fallback order is as DR-0049 specifies.
 - **TESTS-4, TESTS-5:** coverage gaps, closed anyway by the new tests.
 
-## For Josh (DR-0049 details the code fixes)
-
-1. **The minimum for a usable fit:** 12 effective windows, about a year of rows. It applies to name fits and to pooled sector fits.
-2. **A mapped name whose sector has no fit:** it uses its own fit unshrunk, flagged. The alternative is no ratio.
-3. **"3 years" for the sector pool:** the name's first stored close is at least 3 years before the cutoff.
+## Josh's decisions (2026-11-24)
+All three details stand as built, recorded in DR-0049's addendum:
+1. **The minimum for a usable fit:** 12 effective windows.
+2. **A mapped name whose sector has no fit:** its own fit, unshrunk and flagged.
+3. **"3 years" for the sector pool:** judged by the name's first stored close.

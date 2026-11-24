@@ -73,6 +73,16 @@
 - **EXIT-1's own rules** (the 2× target valued at the bid, the 7-day time stop, retries and settlement): these come from the EXIT-1 DR (R2.6). MKTV-1 values whatever EXIT-1 specifies.
 - **FAC-1's and HVOL-1's paths** (R2.5, R2.7).
 
+## Addendum: details settled while building (Josh, 2026-11-24)
+These fill gaps DR-0049 left open. They reopen nothing it decided. See `docs/review/VRP-findings.md`.
+1. **A usable fit** needs at least **12 effective windows** (rows ÷ 21, about a year of mature rows). The rule is the same for a name's fit and a sector's pooled fit.
+2. **A mapped name whose sector has no usable fit** uses its own fit, unshrunk. It's recorded as source "own", with the reason "no <sector> sector fit: own fit unshrunk".
+3. **"3 years" for the sector pool:** the name's first stored official close is at least 3 years before the refit's cutoff. Pool members and the names left out are stored in each refit.
+4. **Also recorded by the code:**
+   - Only SPY and the sector SPDRs use their own fit; a name outside the sector mapping has no ratio.
+   - A shrunk line carries its own clipping share and no standard errors, and each refit reports one overall clipping share.
+   - The inputs hash covers the method and its constants, the cutoff, the symbols, the mapping, the pools and every admitted row.
+
 ## Consequences
 - **A pure market benchmark with a VRP view.** MKTV-1 differs from MKT-1 only by ρ and by valuing EXIT-1 on paths. Its paths reproduce its terminal density exactly, and at ρ = 1 they reproduce MKT-1's distribution and the board's mids.
 - **No IV dynamics.** MKTV-1's early exits don't benefit from IV moves. That's deliberate: IV dynamics are FAC-1's (P6). The P3 contrast then measures the factor model against the market's own view adjusted for the risk premium.
