@@ -1,6 +1,6 @@
 # DR-0050: EXIT-1, the profit target and time stop for R2's long options
 
-- **Status:** proposed (2026-11-25). Josh answered the three open questions (below). The rest is the approved brief's (B06) and awaits his confirmation as written.
+- **Status:** accepted (Josh, 2026-11-26), with his three answers (below).
 - **Date:** 2026-11-25
 - **Source:** R2 brief §1 (the exit rule, B06), P7 (exit fills on paths), P8 (cadence), §5 (EXIT-1 tests); EVAL-2 §1 (the entry boundary), §6.3 (shadow outcomes) and §7.1 (the close step); FILL-1 (DR-0003, DR-0029); EXP-1; ASSIGN-1; SNAPTIMES-1 (DR-0002).
 - **Stage:** R2, Part 1 (R2.6). MKTV-1 (DR-0049), FAC-1, HVOL-1, RAND-L1 and the EVAL-2 panel all value or apply EXIT-1.

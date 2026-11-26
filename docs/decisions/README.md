@@ -51,6 +51,6 @@
 | [DR-0047](DR-0047-run-status-record.md) | The run-status record (EVAL-2 §4.3): a hash-chained `run_status` registry table (REGISTRY-2) and independent engine runs | R2 | accepted |
 | [DR-0048](DR-0048-mkt1-rand1-v4-and-cutover.md) | MKT-1 v4 and RAND-1 v4 (DR-0041 eligibility, DR-0042 ADJ-1) and the cut-over switch | R2 | accepted |
 | [DR-0049](DR-0049-mktv1-paths-and-vrp.md) | MKTV-1: VRP estimate, scaled smile, bridge paths, fixed scaled IV, fallback and bug signal | R2 | accepted |
-| [DR-0050](DR-0050-exit-1.md) | EXIT-1: 2× target after fees, 7-day time stop, committed exits retried to expiration, paths sell at the next node | R2 | proposed |
+| [DR-0050](DR-0050-exit-1.md) | EXIT-1: 2× target after fees, 7-day time stop, committed exits retried to expiration, paths sell at the next node | R2 | accepted |
 
 Each record has these sections: context, options considered, decision, consequences. Status stays *proposed* until Josh confirms it. A confirmed DR is superseded only by a new, linked DR; it is never edited in place.
